@@ -38,6 +38,16 @@ out-of-tree adaptation. The intentional coexistence adaptations are:
 
 Generic DRM patches from the series are **not** copied into this repository.
 
+## Additional upstream commits
+
+Runtime driver changes are carried unchanged, with paths remapped from
+`drivers/gpu/drm/vkms/` to this directory. Upstream KUnit files are not
+included in this external-module source extraction.
+
+- [`8af5fccd9e8af443efd6f0fec5ba56366f57309a`](https://github.com/torvalds/linux/commit/8af5fccd9e8af443efd6f0fec5ba56366f57309a):
+  drm/vkms: Fix limited-range YCbCr to RGB conversion scaling
+  (Harry Wentland).
+
 ## Out-of-tree compatibility
 
 Copied VKMS sources remain upstream-derived, with the isolated naming and

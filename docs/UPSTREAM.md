@@ -36,3 +36,11 @@ Policy:
 - Keep Monitorize-specific behavior out of the VKMS kernel driver.
 - Carry the smallest practical upstream patchset.
 - Remove downstream patches when equivalent support lands upstream.
+
+## Additional merged upstream changes
+
+- [`8af5fccd9e8a`](https://github.com/torvalds/linux/commit/8af5fccd9e8af443efd6f0fec5ba56366f57309a):
+  Fix limited-range YCbCr-to-RGB conversion scaling.
+
+The runtime driver hunks are carried unchanged; see `src/vkms/ORIGIN.md`
+for the full commit identities and extraction scope.
