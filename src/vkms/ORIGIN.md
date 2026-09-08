@@ -47,6 +47,8 @@ included in this external-module source extraction.
 - [`8af5fccd9e8af443efd6f0fec5ba56366f57309a`](https://github.com/torvalds/linux/commit/8af5fccd9e8af443efd6f0fec5ba56366f57309a):
   drm/vkms: Fix limited-range YCbCr to RGB conversion scaling
   (Harry Wentland).
+- [`d1efdf6c848234cc51ddca169fa74f7591164512`](https://github.com/torvalds/linux/commit/d1efdf6c848234cc51ddca169fa74f7591164512):
+  drm/vkms: Move frame_info into vkms_plane_state (Maxime Ripard).
 
 ## Out-of-tree compatibility
 

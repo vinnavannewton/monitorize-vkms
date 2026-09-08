@@ -41,6 +41,8 @@ Policy:
 
 - [`8af5fccd9e8a`](https://github.com/torvalds/linux/commit/8af5fccd9e8af443efd6f0fec5ba56366f57309a):
   Fix limited-range YCbCr-to-RGB conversion scaling.
+- [`d1efdf6c8482`](https://github.com/torvalds/linux/commit/d1efdf6c848234cc51ddca169fa74f7591164512):
+  Embed frame information in plane state instead of allocating it separately.
 
 The runtime driver hunks are carried unchanged; see `src/vkms/ORIGIN.md`
 for the full commit identities and extraction scope.
