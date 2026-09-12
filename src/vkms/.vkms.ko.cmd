@@ -1,0 +1,1 @@
+savedcmd_vkms.ko := ld -r -m elf_x86_64 -z noexecstack --no-warn-rwx-segments --build-id=sha1  -T /usr/src/kernels/7.1.10-200.fc44.x86_64/scripts/module.lds -o vkms.ko vkms.o vkms.mod.o .module-common.o
