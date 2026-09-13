@@ -16,45 +16,46 @@ does not depend on this module by name.
 
 Other distributions and desktop environments have not been validated yet.
 
-## Build from source
-
-On Fedora, install the build requirements:
-
-```sh
-sudo dnf install gcc make git kernel-devel-$(uname -r)
-```
-
-Clone and build:
+## Install
 
 ```sh
 git clone https://github.com/vinnavannewton/monitorize-vkms.git
-cd monitorize-vkms/src/vkms
-make
+cd monitorize-vkms
+sudo ./install.sh
+sudo reboot
 ```
 
-Check the result:
+The installer detects Fedora/RHEL-like, Debian/Ubuntu, Arch, and openSUSE
+systems; installs the required DKMS build dependencies when needed; and stages
+the custom `vkms.ko` for the **next boot**. It never unloads or replaces the
+currently running VKMS module.
+
+After reboot, open Monitorize, select the VKMS backend, and launch a virtual
+display.
+
+## Uninstall
 
 ```sh
-modinfo -F name ./vkms.ko
-modinfo -F vermagic ./vkms.ko
+sudo ./uninstall.sh
+sudo reboot
 ```
 
-Expected module name: `vkms`. Its `vermagic` must match the running kernel.
-
-> Building creates `vkms.ko`; it does not install anything, overwrite the
-> distro module, or persist after reboot.
+This removes only the `monitorize-vkms` DKMS package and restores normal
+resolution to the untouched distro VKMS module after reboot.
 
 ## Important notes
 
-- This is currently a source/development build. DKMS and package installers are
-  planned, not implemented.
-- The module is unsigned. Secure Boot or module-signature enforcement can
-  reject it.
-- Rebuild after every kernel update.
+- This is a source distribution. `install.sh` uses DKMS; distribution packages
+  are not provided.
+- DKMS rebuilds the module for future kernels. If a future build fails, inspect
+  `/var/lib/dkms/monitorize-vkms/` for its build log.
+- Secure Boot is detected. An unsigned DKMS result is rejected; the installer
+  does not disable Secure Boot or enroll signing keys automatically.
 - Never replace VKMS while a graphical session is using its DRM device.
 
 ## Documentation
 
-- [Development and manual testing](docs/DEVELOPMENT.md)
+- [Development and manual testing](docs/DEVELOPMENT.md) (manual builds,
+  temporary module tests, and troubleshooting)
 - [Upstream tracking](docs/UPSTREAM.md)
 - [Source provenance](src/vkms/ORIGIN.md)

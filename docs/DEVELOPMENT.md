@@ -1,7 +1,8 @@
 # Development and manual testing
 
-This page is for development testing only. `monitorize-vkms` is not installed
-persistently: it has no DKMS metadata, package definition, or installer.
+This page is for development testing only. Normal users should follow the
+repository README and use `sudo ./install.sh`, then reboot. The manual steps
+below are useful for source work and troubleshooting, not normal installation.
 
 ## Build
 

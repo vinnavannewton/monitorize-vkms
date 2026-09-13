@@ -1,1 +1,9 @@
 /src/vkms/vkms_oot_features.h
+/src/vkms/*.ko
+/src/vkms/*.mod
+/src/vkms/*.mod.c
+/src/vkms/*.o
+/src/vkms/.*.o
+/src/vkms/.*.cmd
+/src/vkms/Module.symvers
+/src/vkms/modules.order
