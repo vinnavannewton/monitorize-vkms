@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
-# Install monitorize-vkms through DKMS for activation after a normal reboot.
+# Safely install monitorize-vkms through DKMS for the currently running kernel.
 
 set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 022
 
 readonly PACKAGE_NAME="monitorize-vkms"
+readonly MODULE_NAME="monitorize_vkms"
 readonly REPOSITORY_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly MODULE_PACKAGE_VERSION="$(<"${REPOSITORY_DIR}/VERSION")"
 readonly KERNEL="$(uname -r)"
 readonly KERNEL_BUILD_DIR="/lib/modules/${KERNEL}/build"
 readonly SOURCE_DIR="/usr/src/${PACKAGE_NAME}-${MODULE_PACKAGE_VERSION}"
+readonly MODPROBE_CONFIG="/etc/modprobe.d/monitorize-vkms.conf"
+readonly STATE_DIR="/var/lib/monitorize-vkms"
+readonly CONFIG_BACKUP="${STATE_DIR}/preexisting-modprobe.conf"
+readonly LOCK_PATH="/run/lock/monitorize-vkms.lock"
 
 DISTRO_FAMILY=""
+DISTRO_NAME="Linux"
 SECURE_BOOT_STATE="unknown"
+WORK_DIR=""
+NEW_PACKAGE_ADDED=0
+SOURCE_STAGED=0
+INSTALL_COMMITTED=0
 
 log() { printf '[Monitorize VKMS] %s\n' "$*"; }
 warn() { printf '[Monitorize VKMS] Warning: %s\n' "$*" >&2; }
@@ -22,9 +35,12 @@ require_root() {
 }
 
 validate_metadata() {
-	[[ "$MODULE_PACKAGE_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9.+_-]*$ ]] || die "Invalid VERSION: $MODULE_PACKAGE_VERSION"
+	[[ "$MODULE_PACKAGE_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9.+_-]*$ ]] ||
+		die "Invalid VERSION: $MODULE_PACKAGE_VERSION"
 	grep -Fqx "PACKAGE_VERSION=\"${MODULE_PACKAGE_VERSION}\"" "${REPOSITORY_DIR}/dkms.conf" ||
 		die "dkms.conf PACKAGE_VERSION must match VERSION (${MODULE_PACKAGE_VERSION})"
+	grep -Fqx "BUILT_MODULE_NAME[0]=\"${MODULE_NAME}\"" "${REPOSITORY_DIR}/dkms.conf" ||
+		die "dkms.conf must build ${MODULE_NAME}, not replace the distro vkms module"
 }
 
 detect_distro() {
@@ -33,23 +49,14 @@ detect_distro() {
 	. /etc/os-release
 	local id="${ID:-unknown}"
 	local like="${ID_LIKE:-}"
+	DISTRO_NAME="${PRETTY_NAME:-$id}"
 
 	case "$id" in
-		fedora|rhel|centos|rocky|almalinux)
-			DISTRO_FAMILY="fedora"
-			;;
-		ubuntu|debian)
-			DISTRO_FAMILY="debian"
-			;;
-		arch|manjaro|endeavouros)
-			DISTRO_FAMILY="arch"
-			;;
-		nixos)
-			die "Unsupported distribution: NixOS is intentionally unsupported"
-			;;
-		opensuse*|sles)
-			DISTRO_FAMILY="suse"
-			;;
+		fedora|rhel|centos|rocky|almalinux) DISTRO_FAMILY="fedora" ;;
+		ubuntu|debian) DISTRO_FAMILY="debian" ;;
+		arch|manjaro|endeavouros) DISTRO_FAMILY="arch" ;;
+		nixos) die "Unsupported distribution: NixOS is intentionally unsupported" ;;
+		opensuse*|sles) DISTRO_FAMILY="suse" ;;
 		*)
 			case " ${like} " in
 				*' rhel '*|*' fedora '*) DISTRO_FAMILY="fedora" ;;
@@ -60,91 +67,149 @@ detect_distro() {
 			esac
 			;;
 	esac
-
-	log "Detected ${PRETTY_NAME:-$id}"
+	log "Detected ${DISTRO_NAME}"
 }
 
-requirements_ready() {
-	command -v dkms >/dev/null &&
-	command -v make >/dev/null &&
-	command -v gcc >/dev/null &&
-	[[ -f "${KERNEL_BUILD_DIR}/Makefile" ]]
-}
-
-install_dependencies() {
-	if requirements_ready; then
-		log "Build dependencies already available"
-		return
-	fi
-
-	log "Checking build dependencies..."
+print_dependency_help() {
+	printf '[Monitorize VKMS] Install the missing prerequisites yourself, then rerun this script.\n' >&2
+	printf '[Monitorize VKMS] The installer will never invoke a package manager or install a kernel.\n' >&2
 	case "$DISTRO_FAMILY" in
 		fedora)
-			dnf -y install dkms gcc make "kernel-devel-${KERNEL}"
+			printf '[Monitorize VKMS] Fedora: install dkms, gcc, make, and the exact headers for %s.\n' "$KERNEL" >&2
 			;;
 		debian)
-			DEBIAN_FRONTEND=noninteractive apt-get update
-			DEBIAN_FRONTEND=noninteractive apt-get install -y \
-				dkms build-essential "linux-headers-${KERNEL}"
+			printf '[Monitorize VKMS] Debian/Ubuntu: install dkms, build-essential, and linux-headers-%s.\n' "$KERNEL" >&2
 			;;
 		arch)
-			local pkgbase_file="/usr/lib/modules/${KERNEL}/pkgbase"
-			[[ -r "$pkgbase_file" ]] ||
-				die "Cannot determine the Arch headers package for ${KERNEL}: ${pkgbase_file} is missing"
-			local pkgbase
-			pkgbase="$(<"$pkgbase_file")"
-			[[ -n "$pkgbase" ]] || die "Arch pkgbase metadata is empty for ${KERNEL}"
-			pacman -S --needed --noconfirm dkms base-devel "${pkgbase}-headers"
+			printf '[Monitorize VKMS] Arch: fully upgrade/reboot first, then install dkms, base-devel, and matching kernel headers.\n' >&2
 			;;
 		suse)
-			local flavor="${KERNEL##*-}"
-			zypper --non-interactive install -y dkms gcc make "kernel-${flavor}-devel"
-			;;
-		*)
-			die "Unsupported distribution family"
+			printf '[Monitorize VKMS] openSUSE: fully update/reboot first, then install dkms, gcc, make, and matching kernel-devel packages.\n' >&2
 			;;
 	esac
 }
 
-check_kernel_build_tree() {
-	log "Kernel: ${KERNEL}"
-	log "Kernel build directory: ${KERNEL_BUILD_DIR}"
-	[[ -f "${KERNEL_BUILD_DIR}/Makefile" ]] ||
-		die "Missing kernel build tree: ${KERNEL_BUILD_DIR}/Makefile"
-	command -v dkms >/dev/null || die "dkms is unavailable after dependency setup"
-	command -v make >/dev/null || die "make is unavailable after dependency setup"
-	command -v gcc >/dev/null || die "gcc is unavailable after dependency setup"
+check_prerequisites() {
+	local missing=()
+	local command
+	for command in dkms make gcc install modinfo depmod find sort flock; do
+		command -v "$command" >/dev/null || missing+=("$command")
+	done
+	[[ -f "${KERNEL_BUILD_DIR}/Makefile" ]] || missing+=("${KERNEL_BUILD_DIR}/Makefile")
+
+	if ((${#missing[@]})); then
+		printf '[Monitorize VKMS] Missing prerequisites: %s\n' "${missing[*]}" >&2
+		print_dependency_help
+		die "Prerequisite check failed before any system change"
+	fi
+	log "Prerequisites are already installed for running kernel ${KERNEL}"
+}
+
+acquire_global_lock() {
+	exec 9>"$LOCK_PATH"
+	flock -n 9 || die "Another Monitorize VKMS installation or display operation is running"
+}
+
+check_replaceable_module() {
+	local config
+	for config in "/boot/config-${KERNEL}" "${KERNEL_BUILD_DIR}/.config"; do
+		[[ -r "$config" ]] || continue
+		if grep -Fqx 'CONFIG_DRM_VKMS=y' "$config"; then
+			die "${KERNEL} has VKMS built into the kernel; an external VKMS implementation cannot safely coexist"
+		fi
+		return
+	done
+	die "Kernel configuration is unavailable; built-in VKMS cannot be ruled out safely"
 }
 
 check_secure_boot() {
 	if ! command -v mokutil >/dev/null; then
-		log "Secure Boot state: unknown (mokutil is not installed)"
+		if [[ -d /sys/firmware/efi ]]; then
+			die "mokutil is required to determine Secure Boot state on this EFI system"
+		fi
+		SECURE_BOOT_STATE="disabled"
+		log "Secure Boot state: disabled (non-EFI boot)"
 		return
 	fi
 
 	local state
-	if ! state="$(mokutil --sb-state 2>&1)"; then
-		warn "Secure Boot state: unknown (${state})"
-		return
-	fi
+	state="$(mokutil --sb-state 2>&1)" || die "Could not determine Secure Boot state: ${state}"
 	case "$state" in
 		*[Ee]nabled*) SECURE_BOOT_STATE="enabled" ;;
 		*[Dd]isabled*) SECURE_BOOT_STATE="disabled" ;;
-		*) SECURE_BOOT_STATE="unknown" ;;
+		*) die "Unrecognized Secure Boot state: ${state}" ;;
 	esac
 	log "Secure Boot state: ${SECURE_BOOT_STATE}"
 }
 
+prepare_source_tree() {
+	local target="$1"
+	install -d -m 0755 "${target}/src/vkms" "${target}/scripts"
+	install -m 0644 "${REPOSITORY_DIR}/VERSION" "${REPOSITORY_DIR}/dkms.conf" "${target}/"
+	install -m 0644 "${REPOSITORY_DIR}/src/vkms/Makefile" "${REPOSITORY_DIR}/src/vkms/ORIGIN.md" \
+		"${target}/src/vkms/"
+	install -m 0755 "${REPOSITORY_DIR}/scripts/probe-drm-atomic-api.sh" "${target}/scripts/"
+
+	local source base
+	for source in "${REPOSITORY_DIR}"/src/vkms/*.c "${REPOSITORY_DIR}"/src/vkms/*.h; do
+		base="${source##*/}"
+		[[ "$base" == "vkms_oot_features.h" ]] && continue
+		install -m 0644 "$source" "${target}/src/vkms/${base}"
+	done
+	[[ -f "${target}/src/vkms/vkms_drv.c" ]] || die "VKMS source is incomplete"
+	[[ -f "${target}/src/vkms/vkms_oot_compat.h" ]] || die "Compatibility header is missing"
+	[[ -x "${target}/scripts/probe-drm-atomic-api.sh" ]] || die "Kernel API probe is missing"
+}
+
+verify_module_file() {
+	local module_file="$1"
+	local module_name vermagic
+	module_name="$(modinfo -F name "$module_file")"
+	vermagic="$(modinfo -F vermagic "$module_file")"
+	[[ "$module_name" == "$MODULE_NAME" ]] ||
+		die "Built module name is ${module_name}, expected ${MODULE_NAME}"
+	[[ "$vermagic" == "${KERNEL}"* ]] ||
+		die "Built module vermagic does not match ${KERNEL}: ${vermagic}"
+	modinfo "$module_file" | grep -q '^parm: *create_default_dev:' ||
+		die "Built module lacks create_default_dev"
+}
+
+prebuild_source() {
+	WORK_DIR="$(mktemp -d /tmp/monitorize-vkms-install.XXXXXX)"
+	local prebuild_source="${WORK_DIR}/source"
+	log "Compiling a disposable compatibility preflight before changing the system"
+	prepare_source_tree "$prebuild_source"
+	make -C "${prebuild_source}/src/vkms" KDIR="$KERNEL_BUILD_DIR"
+	verify_module_file "${prebuild_source}/src/vkms/${MODULE_NAME}.ko"
+	log "Compatibility preflight passed for ${KERNEL}"
+}
+
 dkms_versions() {
 	local status line version
-	if ! status="$(dkms status -m "$PACKAGE_NAME" 2>/dev/null)"; then
-		return 0
-	fi
+	status="$(dkms status -m "$PACKAGE_NAME" 2>/dev/null || true)"
 	while IFS= read -r line; do
 		[[ "$line" == "${PACKAGE_NAME}/"* ]] || continue
 		version="${line#"${PACKAGE_NAME}/"}"
 		printf '%s\n' "${version%%,*}"
 	done <<< "$status" | sort -u
+}
+
+current_version_installed() {
+	dkms status -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" -k "$KERNEL" 2>/dev/null |
+		grep -Eq '[:,][[:space:]]*(installed|weak-installed)($|,)'
+}
+
+version_uses_legacy_module_name() {
+	local version="$1"
+	local configuration
+	[[ "$version" == "0.1.0" ]] && return 0
+	for configuration in \
+		"/usr/src/${PACKAGE_NAME}-${version}/dkms.conf" \
+		"/var/lib/dkms/${PACKAGE_NAME}/${version}/source/dkms.conf"; do
+		[[ -r "$configuration" ]] || continue
+		grep -Fqx 'BUILT_MODULE_NAME[0]="vkms"' "$configuration" && return 0
+	done
+	return 1
 }
 
 remove_staged_source() {
@@ -156,120 +221,174 @@ remove_staged_source() {
 	esac
 }
 
-remove_old_monitorize_dkms() {
-	local version
-	while IFS= read -r version; do
-		[[ -n "$version" ]] || continue
-		log "Removing existing ${PACKAGE_NAME}/${version} DKMS package"
-		dkms remove -m "$PACKAGE_NAME" -v "$version" --all
-		remove_staged_source "$version"
-	done < <(dkms_versions)
-}
-
 stage_dkms_source() {
-	log "Staging DKMS source in ${SOURCE_DIR}"
+	log "Staging validated DKMS source in ${SOURCE_DIR}"
 	remove_staged_source "$MODULE_PACKAGE_VERSION"
-	install -d -m 0755 "${SOURCE_DIR}/src/vkms" "${SOURCE_DIR}/scripts"
-	install -m 0644 "${REPOSITORY_DIR}/VERSION" "${REPOSITORY_DIR}/dkms.conf" "${SOURCE_DIR}/"
-	install -m 0644 "${REPOSITORY_DIR}/src/vkms/Makefile" "${REPOSITORY_DIR}/src/vkms/ORIGIN.md" \
-		"${SOURCE_DIR}/src/vkms/"
-	install -m 0755 "${REPOSITORY_DIR}/scripts/probe-drm-atomic-api.sh" "${SOURCE_DIR}/scripts/"
-
-	local source base
-	for source in "${REPOSITORY_DIR}"/src/vkms/*.c "${REPOSITORY_DIR}"/src/vkms/*.h; do
-		base="${source##*/}"
-		[[ "$base" == "vkms_oot_features.h" ]] && continue
-		install -m 0644 "$source" "${SOURCE_DIR}/src/vkms/${base}"
-	done
-
+	SOURCE_STAGED=1
+	prepare_source_tree "$SOURCE_DIR"
 	chown -R root:root "$SOURCE_DIR"
-	[[ -f "${SOURCE_DIR}/dkms.conf" ]] || die "DKMS configuration was not staged"
-	[[ -f "${SOURCE_DIR}/src/vkms/vkms_drv.c" ]] || die "VKMS source was not staged"
-	[[ -f "${SOURCE_DIR}/src/vkms/vkms_oot_compat.h" ]] || die "Compatibility header was not staged"
-	[[ -x "${SOURCE_DIR}/scripts/probe-drm-atomic-api.sh" ]] || die "Atomic API probe was not staged"
-	[[ ! -e "${SOURCE_DIR}/src/vkms/vkms_oot_features.h" ]] ||
-		die "Generated feature header must not be staged"
 }
 
 install_dkms() {
+	if dkms status -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" 2>/dev/null | grep -q .; then
+		log "Removing incomplete ${PACKAGE_NAME}/${MODULE_PACKAGE_VERSION} state"
+		dkms remove -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" --all
+	fi
+	stage_dkms_source
 	log "Adding ${PACKAGE_NAME}/${MODULE_PACKAGE_VERSION} to DKMS"
 	dkms add -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION"
-	log "Building vkms for ${KERNEL}"
+	NEW_PACKAGE_ADDED=1
+	log "Building ${MODULE_NAME} for ${KERNEL}"
 	dkms build -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" -k "$KERNEL"
-	log "Installing DKMS module for ${KERNEL}"
+	log "Installing ${MODULE_NAME} for ${KERNEL}"
 	dkms install -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" -k "$KERNEL"
 	depmod -a "$KERNEL"
 }
 
-rollback_unsigned_install() {
-	warn "Rolling back the unsigned DKMS module to preserve the distro VKMS path"
-	dkms remove -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" --all
-	remove_staged_source "$MODULE_PACKAGE_VERSION"
+remove_legacy_versions() {
+	local version stock
+	while IFS= read -r version; do
+		[[ -n "$version" && "$version" != "$MODULE_PACKAGE_VERSION" ]] || continue
+		version_uses_legacy_module_name "$version" || continue
+		log "Restoring distro vkms before migrating legacy ${PACKAGE_NAME}/${version}"
+		dkms remove -m "$PACKAGE_NAME" -v "$version" --all
+		remove_staged_source "$version"
+	done < <(dkms_versions)
 	depmod -a "$KERNEL"
+	stock="$(modinfo -k "$KERNEL" -n vkms 2>/dev/null || true)"
+	case "$stock" in
+		"/lib/modules/${KERNEL}/kernel/"*) ;;
+		"") die "Distro vkms did not return after removing the legacy replacement" ;;
+		*) die "Legacy external vkms still resolves after migration: ${stock}" ;;
+	esac
+}
+
+secure_boot_key_is_enrolled() {
+	local certificate
+	for certificate in \
+		/var/lib/dkms/mok.pub \
+		/var/lib/shim-signed/mok/MOK.der \
+		/etc/dkms/mok.pub; do
+		[[ -r "$certificate" ]] || continue
+		if mokutil --test-key "$certificate" >/dev/null 2>&1; then
+			log "Secure Boot trusts DKMS certificate ${certificate}"
+			return 0
+		fi
+	done
+	return 1
 }
 
 verify_installation() {
-	log "Verifying module precedence..."
-	local preferred distro_module module_name vermagic signer
-	preferred="$(modinfo -k "$KERNEL" -n vkms)" || die "modinfo cannot resolve vkms for ${KERNEL}"
-	distro_module=""
-	local distro_directory="/lib/modules/${KERNEL}/kernel/drivers/gpu/drm/vkms"
-	if [[ -d "$distro_directory" ]]; then
-		distro_module="$(find "$distro_directory" -maxdepth 1 -type f \
-			-name 'vkms.ko*' -print -quit)"
-	fi
-	log "Preferred VKMS: ${preferred}"
-	[[ -n "$distro_module" ]] && log "Distro VKMS: ${distro_module}"
+	log "Verifying isolated module installation..."
+	local preferred signer
+	preferred="$(modinfo -k "$KERNEL" -n "$MODULE_NAME")" ||
+		die "modinfo cannot resolve ${MODULE_NAME} for ${KERNEL}"
+	log "Installed Monitorize VKMS: ${preferred}"
 	case "$preferred" in
 		"/lib/modules/${KERNEL}/updates/"*|"/lib/modules/${KERNEL}/extra/"*) ;;
-		*) die "DKMS module is not preferred over the distro VKMS module" ;;
+		*) die "${MODULE_NAME} is outside a recognized external-module directory" ;;
 	esac
+	verify_module_file "$preferred"
 
-	module_name="$(modinfo -F name "$preferred")"
-	vermagic="$(modinfo -F vermagic "$preferred")"
-	[[ "$module_name" == "vkms" ]] || die "Installed module name is ${module_name}, expected vkms"
-	[[ "$vermagic" == "${KERNEL}"* ]] || die "Installed module vermagic does not match ${KERNEL}: ${vermagic}"
-	modinfo "$preferred" | grep -q '^parm: *create_default_dev:' ||
-		die "Installed module lacks create_default_dev"
+	# The safety invariant: installing Monitorize must not relocate or outrank
+	# the distro vkms module under its original name.
+	local stock
+	stock="$(modinfo -k "$KERNEL" -n vkms 2>/dev/null || true)"
+	case "$stock" in
+		"/lib/modules/${KERNEL}/kernel/"*) log "Distro VKMS remains untouched: ${stock}" ;;
+		"") die "The distro vkms module stopped resolving after installation" ;;
+		*) die "A legacy external module still overrides distro vkms: ${stock}" ;;
+	esac
 
 	if [[ "$SECURE_BOOT_STATE" == "enabled" ]]; then
 		signer="$(modinfo -F signer "$preferred")"
-		if [[ -z "$signer" ]]; then
-			rollback_unsigned_install
-			die "Secure Boot is enabled and DKMS produced an unsigned module. Configure MOK/module signing, then rerun the installer."
-		fi
-		log "DKMS module signer: ${signer}"
-		warn "Confirm that the signing key is trusted by this system before rebooting; the installer does not enroll MOK keys automatically."
+		[[ -n "$signer" ]] || die "Secure Boot is enabled but DKMS produced an unsigned module"
+		secure_boot_key_is_enrolled ||
+			die "${MODULE_NAME} is signed by ${signer}, but no enrolled DKMS certificate could be verified; enroll the DKMS MOK first"
 	fi
 }
 
 write_modprobe_configuration() {
-	install -d -m 0755 /etc/modprobe.d
-	cat > /etc/modprobe.d/monitorize-vkms.conf <<'EOF'
-# Monitorize creates VKMS devices through configfs; do not create the legacy
-# default virtual display when vkms is loaded.
-options vkms create_default_dev=0
-EOF
-	chmod 0644 /etc/modprobe.d/monitorize-vkms.conf
+	install -d -m 0755 /etc/modprobe.d "$STATE_DIR"
+	local legacy_owned=0
+	if [[ -f "$MODPROBE_CONFIG" ]] &&
+		grep -Fq '# Monitorize creates VKMS devices through configfs' "$MODPROBE_CONFIG" &&
+		grep -Fqx 'options vkms create_default_dev=0' "$MODPROBE_CONFIG"; then
+		legacy_owned=1
+	fi
+	if [[ -f "$MODPROBE_CONFIG" ]] &&
+		! grep -Fq '# Managed by monitorize-vkms' "$MODPROBE_CONFIG" &&
+		((!legacy_owned)) &&
+		[[ ! -e "$CONFIG_BACKUP" ]]; then
+		install -m 0644 "$MODPROBE_CONFIG" "$CONFIG_BACKUP"
+		log "Backed up pre-existing modprobe configuration"
+	fi
+
+	local temporary
+	temporary="$(mktemp /etc/modprobe.d/.monitorize-vkms.XXXXXX)"
+	printf '%s\n' \
+		'# Managed by monitorize-vkms. Monitorize creates devices through configfs.' \
+		'options monitorize_vkms create_default_dev=0' > "$temporary"
+	chmod 0644 "$temporary"
+	mv -f "$temporary" "$MODPROBE_CONFIG"
+}
+
+remove_old_versions() {
+	local version
+	while IFS= read -r version; do
+		[[ -n "$version" && "$version" != "$MODULE_PACKAGE_VERSION" ]] || continue
+		log "Removing superseded ${PACKAGE_NAME}/${version} after the new module was installed"
+		if dkms remove -m "$PACKAGE_NAME" -v "$version" --all; then
+			remove_staged_source "$version"
+		else
+			die "Could not remove old DKMS version ${version}; rerun uninstall.sh before retrying"
+		fi
+	done < <(dkms_versions)
+	depmod -a "$KERNEL"
+}
+
+rollback_failed_install() {
+	local status="$1"
+	[[ "$WORK_DIR" && -d "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"
+	if ((status != 0 && ! INSTALL_COMMITTED)); then
+		if ((NEW_PACKAGE_ADDED)); then
+			warn "Installation failed; removing the new DKMS package"
+			dkms remove -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" --all >/dev/null 2>&1 || true
+		fi
+		((SOURCE_STAGED)) && remove_staged_source "$MODULE_PACKAGE_VERSION"
+		depmod -a "$KERNEL" >/dev/null 2>&1 || true
+	fi
 }
 
 main() {
 	require_root
 	validate_metadata
 	detect_distro
-	install_dependencies
-	check_kernel_build_tree
+	check_prerequisites
+	acquire_global_lock
+	check_replaceable_module
 	check_secure_boot
-	remove_old_monitorize_dkms
-	stage_dkms_source
-	install_dkms
+	trap 'rollback_failed_install $?' EXIT
+	prebuild_source
+	remove_legacy_versions
+
+	if current_version_installed; then
+		log "${PACKAGE_NAME}/${MODULE_PACKAGE_VERSION} is already installed for ${KERNEL}; verifying it"
+	else
+		install_dkms
+	fi
+	# Retire legacy same-name releases before checking that distro vkms resolves
+	# back to its packaged path. A failure still rolls the new package back.
+	remove_old_versions
 	verify_installation
 	write_modprobe_configuration
+	INSTALL_COMMITTED=1
 
 	printf '\n==========================================\n'
-	printf 'Monitorize VKMS installed successfully\n'
+	printf 'Monitorize VKMS installed safely\n'
 	printf '==========================================\n\n'
-	printf 'Reboot to activate the new VKMS module:\n\n    sudo reboot\n'
+	printf 'The distro vkms.ko was not replaced. Reboot once so any loaded stock VKMS\n'
+	printf 'instance is gone. Start a VKMS display in Monitorize, then run scripts/verify-install.sh.\n'
 }
 
 main "$@"
