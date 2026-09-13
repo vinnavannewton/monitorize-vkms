@@ -5,10 +5,10 @@ set -euo pipefail
 
 readonly PACKAGE_NAME="monitorize-vkms"
 readonly REPOSITORY_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-readonly VERSION="$(<"${REPOSITORY_DIR}/VERSION")"
+readonly MODULE_PACKAGE_VERSION="$(<"${REPOSITORY_DIR}/VERSION")"
 readonly KERNEL="$(uname -r)"
 readonly KERNEL_BUILD_DIR="/lib/modules/${KERNEL}/build"
-readonly SOURCE_DIR="/usr/src/${PACKAGE_NAME}-${VERSION}"
+readonly SOURCE_DIR="/usr/src/${PACKAGE_NAME}-${MODULE_PACKAGE_VERSION}"
 
 DISTRO_FAMILY=""
 SECURE_BOOT_STATE="unknown"
@@ -22,9 +22,9 @@ require_root() {
 }
 
 validate_metadata() {
-	[[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9.+_-]*$ ]] || die "Invalid VERSION: $VERSION"
-	grep -Fqx "PACKAGE_VERSION=\"${VERSION}\"" "${REPOSITORY_DIR}/dkms.conf" ||
-		die "dkms.conf PACKAGE_VERSION must match VERSION (${VERSION})"
+	[[ "$MODULE_PACKAGE_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9.+_-]*$ ]] || die "Invalid VERSION: $MODULE_PACKAGE_VERSION"
+	grep -Fqx "PACKAGE_VERSION=\"${MODULE_PACKAGE_VERSION}\"" "${REPOSITORY_DIR}/dkms.conf" ||
+		die "dkms.conf PACKAGE_VERSION must match VERSION (${MODULE_PACKAGE_VERSION})"
 }
 
 detect_distro() {
@@ -168,7 +168,7 @@ remove_old_monitorize_dkms() {
 
 stage_dkms_source() {
 	log "Staging DKMS source in ${SOURCE_DIR}"
-	remove_staged_source "$VERSION"
+	remove_staged_source "$MODULE_PACKAGE_VERSION"
 	install -d -m 0755 "${SOURCE_DIR}/src/vkms" "${SOURCE_DIR}/scripts"
 	install -m 0644 "${REPOSITORY_DIR}/VERSION" "${REPOSITORY_DIR}/dkms.conf" "${SOURCE_DIR}/"
 	install -m 0644 "${REPOSITORY_DIR}/src/vkms/Makefile" "${REPOSITORY_DIR}/src/vkms/ORIGIN.md" \
@@ -192,19 +192,19 @@ stage_dkms_source() {
 }
 
 install_dkms() {
-	log "Adding ${PACKAGE_NAME}/${VERSION} to DKMS"
-	dkms add -m "$PACKAGE_NAME" -v "$VERSION"
+	log "Adding ${PACKAGE_NAME}/${MODULE_PACKAGE_VERSION} to DKMS"
+	dkms add -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION"
 	log "Building vkms for ${KERNEL}"
-	dkms build -m "$PACKAGE_NAME" -v "$VERSION" -k "$KERNEL"
+	dkms build -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" -k "$KERNEL"
 	log "Installing DKMS module for ${KERNEL}"
-	dkms install -m "$PACKAGE_NAME" -v "$VERSION" -k "$KERNEL"
+	dkms install -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" -k "$KERNEL"
 	depmod -a "$KERNEL"
 }
 
 rollback_unsigned_install() {
 	warn "Rolling back the unsigned DKMS module to preserve the distro VKMS path"
-	dkms remove -m "$PACKAGE_NAME" -v "$VERSION" --all
-	remove_staged_source "$VERSION"
+	dkms remove -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" --all
+	remove_staged_source "$MODULE_PACKAGE_VERSION"
 	depmod -a "$KERNEL"
 }
 
