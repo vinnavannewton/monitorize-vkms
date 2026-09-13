@@ -5,9 +5,9 @@ KDIR ?= /lib/modules/$(shell uname -r)/build
 FEATURE_HEADER := $(CURDIR)/vkms_oot_features.h
 ATOMIC_API_PROBE := $(CURDIR)/../../scripts/probe-drm-atomic-api.sh
 
-obj-m := vkms.o
+obj-m := monitorize_vkms.o
 
-vkms-y := \
+monitorize_vkms-y := \
 	vkms_drv.o \
 	vkms_plane.o \
 	vkms_output.o \

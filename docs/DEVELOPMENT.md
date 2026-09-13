@@ -14,27 +14,29 @@ make
 ```
 
 The build uses `/lib/modules/$(uname -r)/build` by default and probes the
-target DRM API before compiling. The result is `src/vkms/vkms.ko`.
+target DRM API before compiling. The result is
+`src/vkms/monitorize_vkms.ko`.
 
 ## Temporary module test
 
-The custom module and the distro module are both named `vkms`; only one can be
-loaded at a time. Do this only from a TTY after logging out of the desktop and
+The custom module is named `monitorize_vkms`, while the distro module remains
+`vkms`. Their configfs registrations still conflict, so only one can be loaded
+at a time. Do this only from a TTY after logging out of the desktop and
 confirming that no process has the VKMS DRM card open.
 
 From `src/vkms`:
 
 ```sh
 sudo modprobe -r vkms
-sudo insmod ./vkms.ko create_default_dev=0
+sudo insmod ./monitorize_vkms.ko create_default_dev=0
 ```
 
 `create_default_dev=0` registers VKMS configfs without creating the legacy
 default virtual display. Verify the load with:
 
 ```sh
-lsmod | grep '^vkms'
-cat /sys/module/vkms/parameters/create_default_dev
+lsmod | grep '^monitorize_vkms'
+cat /sys/module/monitorize_vkms/parameters/create_default_dev
 ls -la /sys/kernel/config/vkms
 ```
 
@@ -58,14 +60,13 @@ Only after the custom module is unused and no compositor has its DRM device
 open:
 
 ```sh
-sudo modprobe -r vkms
+sudo modprobe -r monitorize_vkms
 modinfo -n vkms
 sudo modprobe vkms create_default_dev=0
 ```
 
-`modinfo -n vkms` should resolve below `/lib/modules/...`. Since the custom
-module was loaded directly and not copied there, a normal reboot also restores
-the distro module environment.
+`modinfo -n vkms` should resolve below `/lib/modules/.../kernel/...`. The
+custom module has a different filename and does not replace that distro file.
 
 ## Safety
 
@@ -76,6 +77,9 @@ the distro module environment.
 
 ## Kernel updates and Secure Boot
 
-Rebuild after every kernel update. The development-built module is unsigned, so
-systems enforcing Secure Boot or module-signature validation may reject it.
-Persistent packaging and signed-module handling are not implemented yet.
+Automatic DKMS installation into future kernels is disabled. Boot the new
+kernel and rerun `install.sh`, which first compiles the entire module without
+changing the system. The development-built module is unsigned, so systems
+enforcing Secure Boot or module-signature validation may reject it. The DKMS
+installer accepts Secure Boot only when it can verify both the signature and
+enrollment of a known DKMS MOK certificate.
