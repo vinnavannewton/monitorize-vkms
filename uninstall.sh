@@ -12,6 +12,8 @@ readonly MODPROBE_CONFIG="/etc/modprobe.d/monitorize-vkms.conf"
 readonly STATE_DIR="/var/lib/monitorize-vkms"
 readonly CONFIG_BACKUP="${STATE_DIR}/preexisting-modprobe.conf"
 readonly LOCK_PATH="/run/lock/monitorize-vkms.lock"
+readonly BOOTSTRAP_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-bootstrap"
+readonly BOOTSTRAP_UNIT_PATH="/etc/systemd/system/monitorize-vkms-bootstrap.service"
 
 log() { printf '[Monitorize VKMS] %s\n' "$*"; }
 warn() { printf '[Monitorize VKMS] Warning: %s\n' "$*" >&2; }
@@ -117,6 +119,18 @@ restore_modprobe_configuration() {
 	rmdir "$STATE_DIR" 2>/dev/null || true
 }
 
+remove_bootstrap_service() {
+	if command -v systemctl >/dev/null; then
+		systemctl disable monitorize-vkms-bootstrap.service >/dev/null 2>&1 || true
+	fi
+	rm -f -- "$BOOTSTRAP_UNIT_PATH" "$BOOTSTRAP_PATH"
+	rmdir /usr/libexec/monitorize-vkms 2>/dev/null || true
+	if command -v systemctl >/dev/null; then
+		systemctl daemon-reload || warn 'systemd daemon-reload failed'
+	fi
+	log 'Removed persistent VKMS bootstrap service; the running GPU was not touched'
+}
+
 refresh_module_indexes() {
 	local kernel_dir kernel
 	for kernel_dir in /lib/modules/*; do
@@ -150,6 +164,7 @@ main() {
 	command -v modinfo >/dev/null || die "modinfo is required"
 	command -v flock >/dev/null || die "flock is required"
 	acquire_global_lock
+	remove_bootstrap_service
 
 	if command -v dkms >/dev/null; then
 		remove_dkms_packages

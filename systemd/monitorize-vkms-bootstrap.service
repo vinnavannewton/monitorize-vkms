@@ -1,0 +1,14 @@
+[Unit]
+Description=Create persistent Monitorize VKMS DRM device before the display manager
+Requires=sys-kernel-config.mount
+After=sys-kernel-config.mount
+Before=display-manager.service graphical.target
+ConditionPathExists=/sys/kernel/config
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/monitorize-vkms/monitorize-vkms-bootstrap
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target

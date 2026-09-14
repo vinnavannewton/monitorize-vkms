@@ -17,6 +17,10 @@ readonly MODPROBE_CONFIG="/etc/modprobe.d/monitorize-vkms.conf"
 readonly STATE_DIR="/var/lib/monitorize-vkms"
 readonly CONFIG_BACKUP="${STATE_DIR}/preexisting-modprobe.conf"
 readonly LOCK_PATH="/run/lock/monitorize-vkms.lock"
+readonly BOOTSTRAP_SOURCE="${REPOSITORY_DIR}/scripts/monitorize-vkms-bootstrap.sh"
+readonly BOOTSTRAP_UNIT_SOURCE="${REPOSITORY_DIR}/systemd/monitorize-vkms-bootstrap.service"
+readonly BOOTSTRAP_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-bootstrap"
+readonly BOOTSTRAP_UNIT_PATH="/etc/systemd/system/monitorize-vkms-bootstrap.service"
 
 DISTRO_FAMILY=""
 DISTRO_NAME="Linux"
@@ -25,6 +29,7 @@ WORK_DIR=""
 NEW_PACKAGE_ADDED=0
 SOURCE_STAGED=0
 INSTALL_COMMITTED=0
+BOOTSTRAP_INSTALLED=0
 
 log() { printf '[Monitorize VKMS] %s\n' "$*"; }
 warn() { printf '[Monitorize VKMS] Warning: %s\n' "$*" >&2; }
@@ -333,6 +338,18 @@ write_modprobe_configuration() {
 	mv -f "$temporary" "$MODPROBE_CONFIG"
 }
 
+install_bootstrap_service() {
+	[[ -x "$BOOTSTRAP_SOURCE" ]] || die "Bootstrap helper is missing or not executable"
+	[[ -f "$BOOTSTRAP_UNIT_SOURCE" ]] || die "Bootstrap systemd unit is missing"
+	command -v systemctl >/dev/null || die "systemctl is required for the VKMS bootstrap service"
+	install -D -o root -g root -m 0755 "$BOOTSTRAP_SOURCE" "$BOOTSTRAP_PATH"
+	install -D -o root -g root -m 0644 "$BOOTSTRAP_UNIT_SOURCE" "$BOOTSTRAP_UNIT_PATH"
+	systemctl daemon-reload
+	systemctl enable monitorize-vkms-bootstrap.service
+	BOOTSTRAP_INSTALLED=1
+	log "Enabled persistent VKMS bootstrap for the next boot"
+}
+
 remove_old_versions() {
 	local version
 	while IFS= read -r version; do
@@ -351,6 +368,11 @@ rollback_failed_install() {
 	local status="$1"
 	[[ "$WORK_DIR" && -d "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"
 	if ((status != 0 && ! INSTALL_COMMITTED)); then
+		if ((BOOTSTRAP_INSTALLED)); then
+			systemctl disable monitorize-vkms-bootstrap.service >/dev/null 2>&1 || true
+			rm -f -- "$BOOTSTRAP_UNIT_PATH" "$BOOTSTRAP_PATH"
+			systemctl daemon-reload >/dev/null 2>&1 || true
+		fi
 		if ((NEW_PACKAGE_ADDED)); then
 			warn "Installation failed; removing the new DKMS package"
 			dkms remove -m "$PACKAGE_NAME" -v "$MODULE_PACKAGE_VERSION" --all >/dev/null 2>&1 || true
@@ -382,13 +404,14 @@ main() {
 	remove_old_versions
 	verify_installation
 	write_modprobe_configuration
+	install_bootstrap_service
 	INSTALL_COMMITTED=1
 
 	printf '\n==========================================\n'
 	printf 'Monitorize VKMS installed safely\n'
 	printf '==========================================\n\n'
-	printf 'The distro vkms.ko was not replaced. Reboot once so any loaded stock VKMS\n'
-	printf 'instance is gone. Start a VKMS display in Monitorize, then run scripts/verify-install.sh.\n'
+	printf 'The distro vkms.ko was not replaced. Monitorize VKMS installed. Reboot required.\n'
+	printf 'At the next boot the persistent DRM card is created before the display manager.\n'
 }
 
 main "$@"
