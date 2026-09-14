@@ -23,6 +23,7 @@ assert_not_contains() {
 bash -n \
 	"${ROOT}/install.sh" \
 	"${ROOT}/uninstall.sh" \
+	"${ROOT}/scripts/monitorize-vkms-bootstrap.sh" \
 	"${ROOT}/scripts/verify-install.sh" \
 	"${ROOT}/scripts/probe-drm-atomic-api.sh"
 
@@ -44,5 +45,13 @@ assert_contains "${ROOT}/install.sh" 'PATH=/usr/sbin:/usr/bin:/sbin:/bin'
 assert_contains "${ROOT}/install.sh" 'flock -n 9'
 assert_contains "${ROOT}/uninstall.sh" 'restore_legacy_original_modules'
 assert_contains "${ROOT}/scripts/verify-install.sh" 'Distro vkms remains in its packaged module tree'
+assert_contains "${ROOT}/install.sh" 'install_bootstrap_service'
+assert_not_contains "${ROOT}/install.sh" 'systemctl start monitorize-vkms-bootstrap.service'
+assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'Before=display-manager.service'
+assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'Requires=sys-kernel-config.mount'
+assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'After=sys-kernel-config.mount'
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${CONNECTOR}/dynamic\""
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '0' > \"\${CONNECTOR}/enabled\""
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" 'find_monitorize_drm_card'
 
 printf 'monitorize-vkms safety checks passed\n'
