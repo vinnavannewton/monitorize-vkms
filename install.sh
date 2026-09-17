@@ -21,6 +21,13 @@ readonly BOOTSTRAP_SOURCE="${REPOSITORY_DIR}/scripts/monitorize-vkms-bootstrap.s
 readonly BOOTSTRAP_UNIT_SOURCE="${REPOSITORY_DIR}/systemd/monitorize-vkms-bootstrap.service"
 readonly BOOTSTRAP_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-bootstrap"
 readonly BOOTSTRAP_UNIT_PATH="/etc/systemd/system/monitorize-vkms-bootstrap.service"
+readonly HELPER_SOURCE="${REPOSITORY_DIR}/monitorize_vkms/helper.py"
+readonly HELPER_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-helper"
+readonly POLKIT_POLICY_SOURCE="${REPOSITORY_DIR}/packaging/io.github.vinnavannewton.monitorize-vkms.policy"
+readonly POLKIT_POLICY_PATH="/usr/share/polkit-1/actions/io.github.vinnavannewton.monitorize-vkms.policy"
+readonly CLI_SOURCE="${REPOSITORY_DIR}/scripts/monitorize-vkms-cli"
+readonly CLI_PATH="/usr/bin/monitorize-vkms"
+readonly PYTHON_LIB_DIR="/usr/lib/monitorize-vkms"
 
 DISTRO_FAMILY=""
 DISTRO_NAME="Linux"
@@ -30,6 +37,7 @@ NEW_PACKAGE_ADDED=0
 SOURCE_STAGED=0
 INSTALL_COMMITTED=0
 BOOTSTRAP_INSTALLED=0
+CLI_INSTALLED=0
 
 log() { printf '[Monitorize VKMS] %s\n' "$*"; }
 warn() { printf '[Monitorize VKMS] Warning: %s\n' "$*" >&2; }
@@ -362,6 +370,27 @@ install_bootstrap_service() {
 	log "Enabled persistent VKMS bootstrap for the next boot"
 }
 
+install_cli_and_tools() {
+	log "Installing standalone CLI, helper, and Polkit policy"
+	install -D -o root -g root -m 0755 "$HELPER_SOURCE" "$HELPER_PATH"
+	if [[ -d "/usr/share/polkit-1/actions" ]]; then
+		install -D -o root -g root -m 0644 "$POLKIT_POLICY_SOURCE" "$POLKIT_POLICY_PATH"
+		log "Installed Polkit policy: ${POLKIT_POLICY_PATH}"
+	else
+		warn "Polkit actions directory not found; Polkit policy not installed"
+	fi
+	install -d -m 0755 "${PYTHON_LIB_DIR}/monitorize_vkms"
+	install -m 0644 "${REPOSITORY_DIR}/VERSION" "${PYTHON_LIB_DIR}/"
+	local pyfile
+	for pyfile in "${REPOSITORY_DIR}"/monitorize_vkms/*.py; do
+		install -m 0644 "$pyfile" "${PYTHON_LIB_DIR}/monitorize_vkms/"
+	done
+	chmod 0755 "${PYTHON_LIB_DIR}/monitorize_vkms/helper.py"
+	install -D -o root -g root -m 0755 "$CLI_SOURCE" "$CLI_PATH"
+	CLI_INSTALLED=1
+	log "Installed standalone CLI: ${CLI_PATH}"
+}
+
 remove_old_versions() {
 	local version
 	while IFS= read -r version; do
@@ -380,6 +409,10 @@ rollback_failed_install() {
 	local status="$1"
 	[[ "$WORK_DIR" && -d "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"
 	if ((status != 0 && ! INSTALL_COMMITTED)); then
+		if ((CLI_INSTALLED)); then
+			rm -f -- "$CLI_PATH" "$POLKIT_POLICY_PATH" "$HELPER_PATH"
+			rm -rf -- "$PYTHON_LIB_DIR"
+		fi
 		if ((BOOTSTRAP_INSTALLED)); then
 			systemctl disable monitorize-vkms-bootstrap.service >/dev/null 2>&1 || true
 			rm -f -- "$BOOTSTRAP_UNIT_PATH" "$BOOTSTRAP_PATH"
@@ -417,13 +450,20 @@ main() {
 	verify_installation
 	write_modprobe_configuration
 	install_bootstrap_service
+	install_cli_and_tools
 	INSTALL_COMMITTED=1
 
 	printf '\n==========================================\n'
 	printf 'Monitorize VKMS installed safely\n'
 	printf '==========================================\n\n'
 	printf 'The distro vkms.ko was not replaced. Monitorize VKMS installed. Reboot required.\n'
-	printf 'At the next boot the persistent DRM card is created before the display manager.\n'
+	printf 'At the next boot the persistent DRM card is created before the display manager.\n\n'
+	printf 'Standalone CLI commands:\n'
+	printf '  monitorize-vkms doctor\n'
+	printf '  monitorize-vkms create 2340x1080@60\n'
+	printf '  monitorize-vkms list\n'
+	printf '  monitorize-vkms status\n'
+	printf '  monitorize-vkms remove\n'
 }
 
 main "$@"

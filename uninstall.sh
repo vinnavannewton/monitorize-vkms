@@ -14,6 +14,10 @@ readonly CONFIG_BACKUP="${STATE_DIR}/preexisting-modprobe.conf"
 readonly LOCK_PATH="/run/lock/monitorize-vkms.lock"
 readonly BOOTSTRAP_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-bootstrap"
 readonly BOOTSTRAP_UNIT_PATH="/etc/systemd/system/monitorize-vkms-bootstrap.service"
+readonly HELPER_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-helper"
+readonly POLKIT_POLICY_PATH="/usr/share/polkit-1/actions/io.github.vinnavannewton.monitorize-vkms.policy"
+readonly CLI_PATH="/usr/bin/monitorize-vkms"
+readonly PYTHON_LIB_DIR="/usr/lib/monitorize-vkms"
 
 log() { printf '[Monitorize VKMS] %s\n' "$*"; }
 warn() { printf '[Monitorize VKMS] Warning: %s\n' "$*" >&2; }
@@ -131,6 +135,13 @@ remove_bootstrap_service() {
 	log 'Removed persistent VKMS bootstrap service; the running GPU was not touched'
 }
 
+remove_cli_and_tools() {
+	rm -f -- "$CLI_PATH" "$POLKIT_POLICY_PATH" "$HELPER_PATH"
+	rm -rf -- "$PYTHON_LIB_DIR"
+	rmdir /usr/libexec/monitorize-vkms 2>/dev/null || true
+	log "Removed standalone CLI, helper, and Polkit policy"
+}
+
 refresh_module_indexes() {
 	local kernel_dir kernel
 	for kernel_dir in /lib/modules/*; do
@@ -165,6 +176,7 @@ main() {
 	command -v flock >/dev/null || die "flock is required"
 	acquire_global_lock
 	remove_bootstrap_service
+	remove_cli_and_tools
 
 	if command -v dkms >/dev/null; then
 		remove_dkms_packages

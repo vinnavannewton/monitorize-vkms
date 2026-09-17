@@ -25,7 +25,8 @@ bash -n \
 	"${ROOT}/uninstall.sh" \
 	"${ROOT}/scripts/monitorize-vkms-bootstrap.sh" \
 	"${ROOT}/scripts/verify-install.sh" \
-	"${ROOT}/scripts/probe-drm-atomic-api.sh"
+	"${ROOT}/scripts/probe-drm-atomic-api.sh" \
+	"${ROOT}/scripts/monitorize-vkms-cli"
 
 for package_manager in 'dnf ' 'apt-get ' 'pacman ' 'zypper '; do
 	assert_not_contains "${ROOT}/install.sh" "$package_manager"
@@ -46,6 +47,9 @@ assert_contains "${ROOT}/install.sh" 'flock -n 9'
 assert_contains "${ROOT}/uninstall.sh" 'restore_legacy_original_modules'
 assert_contains "${ROOT}/scripts/verify-install.sh" 'Distro vkms remains in its packaged module tree'
 assert_contains "${ROOT}/install.sh" 'install_bootstrap_service'
+assert_contains "${ROOT}/install.sh" 'install_cli_and_tools'
+assert_contains "${ROOT}/uninstall.sh" 'remove_cli_and_tools'
+assert_contains "${ROOT}/packaging/io.github.vinnavannewton.monitorize-vkms.policy" 'monitorize-vkms-helper'
 assert_not_contains "${ROOT}/install.sh" 'systemctl start monitorize-vkms-bootstrap.service'
 assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'Before=display-manager.service'
 assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'Requires=sys-kernel-config.mount'
