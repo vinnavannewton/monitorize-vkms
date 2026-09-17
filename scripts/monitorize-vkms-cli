@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Standalone CLI launcher for monitorize-vkms
+set -euo pipefail
+
+if [[ -d "/usr/lib/monitorize-vkms" ]]; then
+    export PYTHONPATH="/usr/lib/monitorize-vkms${PYTHONPATH:+:$PYTHONPATH}"
+fi
+
+exec python3 -m monitorize_vkms.cli "$@"
