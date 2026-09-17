@@ -1,1 +1,1 @@
-savedcmd_modules.order := {   echo vkms.o; :; } > modules.order
+savedcmd_modules.order := {   echo monitorize_vkms.o; :; } > modules.order

@@ -312,6 +312,9 @@ struct vkms_connector *vkms_connector_hot_add(struct vkms_device *vkmsdev,
 	if (ret)
 		return ERR_PTR(ret);
 
+	if (vkms_config_connector_get_edid_enabled(connector_cfg))
+		drm_connector_attach_edid_property(&connector->base);
+
 	vkms_connector_build_path_property(connector, connector_cfg);
 
 	ret = drm_connector_dynamic_register(&connector->base);

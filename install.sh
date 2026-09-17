@@ -204,6 +204,18 @@ current_version_installed() {
 		grep -Eq '[:,][[:space:]]*(installed|weak-installed)($|,)'
 }
 
+source_matches_installed() {
+	local staged="${SOURCE_DIR}/src/vkms"
+	[[ -d "$staged" ]] || return 1
+	local source base
+	for source in "${REPOSITORY_DIR}"/src/vkms/*.c "${REPOSITORY_DIR}"/src/vkms/*.h; do
+		base="${source##*/}"
+		[[ "$base" == "vkms_oot_features.h" ]] && continue
+		cmp -s "$source" "${staged}/${base}" || return 1
+	done
+	return 0
+}
+
 version_uses_legacy_module_name() {
 	local version="$1"
 	local configuration
@@ -394,8 +406,8 @@ main() {
 	prebuild_source
 	remove_legacy_versions
 
-	if current_version_installed; then
-		log "${PACKAGE_NAME}/${MODULE_PACKAGE_VERSION} is already installed for ${KERNEL}; verifying it"
+	if current_version_installed && source_matches_installed; then
+		log "${PACKAGE_NAME}/${MODULE_PACKAGE_VERSION} is already installed and matches source for ${KERNEL}; verifying it"
 	else
 		install_dkms
 	fi
