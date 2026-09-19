@@ -41,7 +41,7 @@ fi
 
 if [[ -d "/sys/module/${MODULE_NAME}" ]]; then
 	pass "${MODULE_NAME} is the loaded implementation"
-	parameter="$(<"/sys/module/${MODULE_NAME}/parameters/create_default_dev" 2>/dev/null || true)"
+	parameter="$(cat -- "/sys/module/${MODULE_NAME}/parameters/create_default_dev" 2>/dev/null || true)"
 	[[ "$parameter" == "N" || "$parameter" == "0" ]] || fail "create_default_dev is not disabled (${parameter:-unavailable})"
 elif [[ -d /sys/module/vkms ]]; then
 	fail "The stock vkms module is loaded; reboot before using Monitorize custom VKMS modes"
