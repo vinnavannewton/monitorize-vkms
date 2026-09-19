@@ -89,7 +89,7 @@ def cmd_create(args: argparse.Namespace) -> int:
 
     try:
         drm_conn = wait_for_new_drm_connector(
-            drm_before, width, height, log=_drm_log
+            drm_before, width, height, log=_drm_log, allow_existing=True
         )
     except MonitorizeVkmsError as exc:
         if args.json:
@@ -102,7 +102,12 @@ def cmd_create(args: argparse.Namespace) -> int:
     comp_msg = ""
     try:
         ok, comp_details, comp_msg = activate_in_compositor(
-            desktop, before_comp, width, height, refresh
+            desktop,
+            before_comp,
+            width,
+            height,
+            refresh,
+            expected_output_name=drm_conn["name"],
         )
         if not ok:
             raise CompositorError(comp_msg)
@@ -144,7 +149,13 @@ def cmd_create(args: argparse.Namespace) -> int:
         else:
             print("\nRunning in foreground mode. Press Ctrl+C or send EOF to exit...")
 
-        def _cleanup(*_):
+        cleaned_up = False
+
+        def _cleanup():
+            nonlocal cleaned_up
+            if cleaned_up:
+                return
+            cleaned_up = True
             if not args.json:
                 print("\nCleaning up virtual display...")
             try:
@@ -155,21 +166,24 @@ def cmd_create(args: argparse.Namespace) -> int:
                 helper_response("destroy")
             except Exception:
                 pass
-            sys.exit(0)
 
-        signal.signal(signal.SIGINT, _cleanup)
-        signal.signal(signal.SIGTERM, _cleanup)
+        def _stop_from_signal(*_):
+            raise KeyboardInterrupt
 
-        while True:
-            try:
+        signal.signal(signal.SIGINT, _stop_from_signal)
+        signal.signal(signal.SIGTERM, _stop_from_signal)
+
+        try:
+            while True:
                 ready, _, _ = select.select([sys.stdin], [], [], 0.5)
                 if ready:
                     line = sys.stdin.readline()
                     if not line or line.strip() == "quit":
-                        _cleanup()
-            except (KeyboardInterrupt, SystemExit):
-                _cleanup()
-                break
+                        break
+        except KeyboardInterrupt:
+            pass
+        finally:
+            _cleanup()
 
     return 0
 
@@ -250,6 +264,12 @@ def cmd_status(args: argparse.Namespace) -> int:
         if (configfs_dev / "connectors/connector0/enabled").is_file()
         else False
     )
+    connector_status = (
+        (configfs_dev / "connectors/connector0/status").read_text().strip()
+        if (configfs_dev / "connectors/connector0/status").is_file()
+        else ""
+    )
+    connector_connected = connector_status == "1"
     edid_enabled = (
         (configfs_dev / "connectors/connector0/edid_enabled").read_text().strip() == "1"
         if (configfs_dev / "connectors/connector0/edid_enabled").is_file()
@@ -270,6 +290,8 @@ def cmd_status(args: argparse.Namespace) -> int:
             "configfs_path": str(configfs_dev),
             "device_enabled": device_enabled,
             "connector0_enabled": connector_enabled,
+            "connector0_registered": connector_enabled,
+            "connector0_connected": connector_connected,
             "connector0_edid_enabled": edid_enabled,
         },
         "drm": {
@@ -286,7 +308,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"Monitorize VKMS Status (v{__version__}):")
     print(f"  Kernel Module   : {'Loaded' if module_loaded else 'NOT loaded'}")
     print(f"  ConfigFS Device : {'Enabled' if device_enabled else 'Disabled / Missing'}")
-    print(f"  Connector0      : {'Active' if connector_enabled else 'Inactive (ready)'}")
+    print(f"  Connector0      : {'Registered' if connector_enabled else 'NOT registered'}")
+    print(f"  Display State   : {'Connected' if connector_connected else 'Disconnected (ready)'}")
     print(f"  Custom EDID     : {'Enabled' if edid_enabled else 'Disabled'}")
     print(f"  DRM Card        : {card.name if card else 'None'}")
     print(f"  Desktop Session : {desktop or 'Unknown / None'}")
@@ -344,12 +367,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         instance.is_dir()
         and (instance / "enabled").is_file()
         and (instance / "enabled").read_text().strip() == "1"
+        and (instance / "connectors/connector0/enabled").is_file()
+        and (instance / "connectors/connector0/enabled").read_text().strip() == "1"
     )
     check(
         "Persistent VKMS topology bootstrapped",
         bootstrap_ok,
-        f"Device enabled at {instance}" if bootstrap_ok else "Topology missing or disabled",
-        "Enable bootstrap service: sudo systemctl enable --now monitorize-vkms-bootstrap.service",
+        f"Device and persistent connector registered at {instance}"
+        if bootstrap_ok
+        else "Topology missing, disabled, or connector not registered",
+        "Reinstall monitorize-vkms and reboot so KWin discovers the complete KMS card.",
     )
 
     # 5. Connector0 properties

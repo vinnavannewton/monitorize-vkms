@@ -831,8 +831,9 @@ def kde_activate_vkms(
     height: int,
     refresh: float,
     timeout: float = 10.0,
+    expected_output_name: str | None = None,
 ) -> tuple[bool, dict[str, Any], str]:
-    """Wait for new output in KDE and set requested mode via kscreen-doctor."""
+    """Wait for a new or re-enabled VKMS output and set its mode in KDE."""
     if not shutil.which("kscreen-doctor"):
         return False, {}, "kscreen-doctor is not installed"
 
@@ -844,7 +845,9 @@ def kde_activate_vkms(
         current = kde_outputs()
         for out in current:
             name = str(out.get("name") or "")
-            if name and name not in before_names and out.get("connected", True):
+            is_new = name not in before_names
+            is_reenabled = bool(expected_output_name and name == expected_output_name)
+            if name and (is_new or is_reenabled) and out.get("connected", True):
                 output_name = name
                 output_info = out
                 break
@@ -853,7 +856,8 @@ def kde_activate_vkms(
         time.sleep(0.1)
 
     if not output_name or not output_info:
-        return False, {}, f"KWin did not expose new output within {timeout:g}s"
+        expected = f" {expected_output_name}" if expected_output_name else ""
+        return False, {}, f"KWin did not expose new or re-enabled output{expected} within {timeout:g}s"
 
     # Find matching mode
     target_mode_id = None
@@ -924,6 +928,7 @@ def activate_in_compositor(
     width: int,
     height: int,
     refresh: float,
+    expected_output_name: str | None = None,
 ) -> tuple[bool, dict[str, Any], str]:
     """Activate newly added virtual display in the active desktop compositor."""
     if desktop == "gnome":
@@ -932,7 +937,11 @@ def activate_in_compositor(
         )
     elif desktop == "kde":
         return kde_activate_vkms(
-            before_state or set(), width, height, refresh
+            before_state or set(),
+            width,
+            height,
+            refresh,
+            expected_output_name=expected_output_name,
         )
     elif desktop is None:
         return (

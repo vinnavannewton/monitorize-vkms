@@ -1,14 +1,63 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
 <policyconfig>
-  <action id="io.github.vinnavannewton.monitorize-vkms">
-    <description>Manage Monitorize VKMS virtual display</description>
-    <message>Administrator authorization is required to manage the virtual display.</message>
+  <action id="io.github.vinnavannewton.monitorize-vkms.create">
+    <description>Create a Monitorize VKMS virtual display</description>
+    <message>Administrator authorization is required to create the virtual display.</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>auth_admin_keep</allow_active>
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">create</annotate>
+  </action>
+
+  <action id="io.github.vinnavannewton.monitorize-vkms.create-custom">
+    <description>Create a custom Monitorize VKMS virtual display</description>
+    <message>Administrator authorization is required to create the virtual display.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">create-custom</annotate>
+  </action>
+
+  <action id="io.github.vinnavannewton.monitorize-vkms.destroy">
+    <description>Stop the active Monitorize VKMS virtual display</description>
+    <message>Authorization is required to stop the virtual display.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">destroy</annotate>
+  </action>
+
+  <action id="io.github.vinnavannewton.monitorize-vkms.status">
+    <description>Read Monitorize VKMS virtual display status</description>
+    <message>Authorization is required to read virtual display status.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">status</annotate>
+  </action>
+
+  <action id="io.github.vinnavannewton.monitorize-vkms.capability">
+    <description>Read Monitorize VKMS custom EDID capability</description>
+    <message>Authorization is required to read virtual display capabilities.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">capability</annotate>
   </action>
 </policyconfig>

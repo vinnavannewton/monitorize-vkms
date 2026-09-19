@@ -55,9 +55,9 @@ monitorize-vkms create 2340x1080@60 --json
 `monitorize-vkms` uses a **persistent topology, privilege-separated** architecture:
 
 1. **Persistent DRM Device**: The `monitorize-vkms-bootstrap.service` systemd unit creates a persistent DRM card (`cardX` linked to `/sys/devices/faux/monitorize`) before the display manager starts. This ensures the display manager and compositors recognize the card safely at startup.
-2. **Dynamic Connector**: The virtual monitor connector (`connector0`) is initialized as dynamic and disconnected (`enabled=0`). The DRM card remains alive permanently; only the connector state transitions dynamically.
+2. **Persistent Connector Registration**: The virtual monitor connector (`connector0`) is registered before the display manager starts but reports `disconnected`. This makes the card KMS-capable during compositor discovery. Create/remove operations change connector status and EDID without unregistering it, so KWin continues tracking the DRM card.
 3. **Custom EDID Generation**: When a resolution is requested, `monitorize-vkms` generates a valid 128-byte VESA EDID 1.4 block with standard CVT timing.
-4. **Privilege Separation**: The CLI runs as an unprivileged user. Writes to `/sys/kernel/config/vkms` are mediated by a dedicated privileged helper (`/usr/libexec/monitorize-vkms/monitorize-vkms-helper`) authorized via Polkit (`io.github.vinnavannewton.monitorize-vkms`).
+4. **Privilege Separation**: The CLI runs as an unprivileged user. Writes to `/sys/kernel/config/vkms` are mediated by a dedicated privileged helper (`/usr/libexec/monitorize-vkms/monitorize-vkms-helper`) with operation-scoped Polkit actions. Creating a display requires administrator authorization; an active local session may stop its fixed Monitorize display without another prompt.
 5. **Compositor Integration**:
    - **GNOME Wayland**: Automatically configured via Mutter's D-Bus `org.gnome.Mutter.DisplayConfig` interface.
    - **KDE Plasma Wayland**: Automatically configured via `kscreen-doctor`.

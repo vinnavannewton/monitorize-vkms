@@ -85,6 +85,7 @@ def wait_for_new_drm_connector(
     interval: float = POLL_INTERVAL, 
     log: Callable[[str], Any] | None = None,
     drm_root: Path | None = None,
+    allow_existing: bool = False,
 ) -> dict:
     started = time.monotonic()
     deadline = started + timeout
@@ -102,12 +103,22 @@ def wait_for_new_drm_connector(
     while time.monotonic() < deadline:
         current = monitorize_drm_connectors(drm_root=drm_root)
         candidates = [entry for name, entry in current.items() if name not in before]
+        reused = False
+        if not candidates and allow_existing:
+            candidates = list(current.values())
+            reused = bool(candidates)
         if len(candidates) == 1:
             connector = candidates[0]
             if appeared is None:
                 appeared = connector
                 appeared_at = time.monotonic()
-                _log(f"DRM connector appeared: {connector['card']}-{connector['name']}")
+                if reused:
+                    _log(
+                        "Reusing persistent DRM connector: "
+                        f"{connector['card']}-{connector['name']}"
+                    )
+                else:
+                    _log(f"DRM connector appeared: {connector['card']}-{connector['name']}")
 
             status = connector["status"].strip().lower()
             if status != last_status:

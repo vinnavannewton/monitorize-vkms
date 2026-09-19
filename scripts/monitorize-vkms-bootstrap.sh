@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the one persistent, connector-disabled Monitorize VKMS topology.
+# Create the one persistent, connector-registered Monitorize VKMS topology.
 
 set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -81,7 +81,7 @@ main() {
 	if [[ -d "$DEVICE" ]] && [[ "$(read_value "${DEVICE}/enabled")" == '1' ]]; then
 		require_persistent_topology
 		[[ "$(read_value "${CONNECTOR}/dynamic")" == '1' ]] || die 'existing connector is not dynamic'
-		[[ "$(read_value "${CONNECTOR}/enabled")" == '0' ]] || die 'existing connector is active; refusing to alter it'
+		[[ "$(read_value "${CONNECTOR}/enabled")" == '1' ]] || die 'existing connector is not registered; reboot after reinstalling monitorize-vkms'
 		drm_card="$(find_monitorize_drm_card)" || die 'persistent VKMS device has no DRM card'
 		log "persistent topology already initialized; DRM card ${drm_card}"
 		return
@@ -103,14 +103,20 @@ main() {
 	ensure_link "${ENCODER}/possible_crtcs/crtc0" "$CRTC"
 	ensure_link "${CONNECTOR}/possible_encoders/encoder0" "$ENCODER"
 	printf '1' > "${CONNECTOR}/dynamic"
-	printf '0' > "${CONNECTOR}/enabled"
-	log 'connector dynamic=yes; connector enabled=no'
+	printf '2' > "${CONNECTOR}/status"
+	# Attach the DRM EDID property when the connector is first registered. The
+	# helper can then replace or disable the EDID while the connector remains
+	# registered and disconnected.
+	printf '1' > "${CONNECTOR}/edid_enabled"
+	printf '1' > "${CONNECTOR}/enabled"
+	log 'connector registered in disconnected state for compositor discovery'
 	printf '1' > "${DEVICE}/enabled"
 	[[ "$(read_value "${DEVICE}/enabled")" == '1' ]] || die 'could not enable persistent VKMS device'
 	[[ "$(read_value "${CONNECTOR}/dynamic")" == '1' ]] || die 'connector is not dynamic'
-	[[ "$(read_value "${CONNECTOR}/enabled")" == '0' ]] || die 'connector is unexpectedly active'
+	[[ "$(read_value "${CONNECTOR}/enabled")" == '1' ]] || die 'connector is not registered'
+	[[ "$(read_value "${CONNECTOR}/status")" == '2' ]] || die 'connector is unexpectedly connected'
 	drm_card="$(find_monitorize_drm_card)" || die 'persistent VKMS device has no DRM card'
-	log "persistent VKMS device enabled; DRM card ${drm_card} is ready for the display manager"
+	log "persistent VKMS device and disconnected connector enabled; DRM card ${drm_card} is ready for the display manager"
 }
 
 main "$@"
