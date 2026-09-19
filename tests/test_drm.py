@@ -83,6 +83,26 @@ class TestDrmDiscovery(unittest.TestCase):
             )
         self.assertIn("FAIL_STAGE=DRM_CONNECTOR_APPEAR", str(ctx.exception))
 
+    def test_wait_reuses_persistent_connector_when_it_becomes_ready(self):
+        conn = self.drm_root / "card0-Virtual-1"
+        conn.mkdir()
+        (conn / "device").symlink_to(self.faux_dev)
+        (conn / "status").write_text("connected\n")
+        (conn / "modes").write_text("2340x1080\n")
+
+        result = wait_for_new_drm_connector(
+            before={"Virtual-1"},
+            width=2340,
+            height=1080,
+            timeout=0.2,
+            interval=0.05,
+            drm_root=self.drm_root,
+            allow_existing=True,
+        )
+
+        self.assertEqual(result["name"], "Virtual-1")
+        self.assertEqual(result["status"], "connected")
+
 
 if __name__ == "__main__":
     unittest.main()

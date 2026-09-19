@@ -181,9 +181,15 @@ def generate_edid(width: int, height: int, refresh_hz: float) -> bytes:
     for offset in range(38, 54, 2):
         edid[offset:offset + 2] = b"\x01\x01"
     edid[54:72] = dtd
-    edid[72:90] = _descriptor(0xFC, b"MONITORIZE\n")
+    # Keep the EDID model name aligned with the stable DRM connector name.
+    # Desktop settings panels use this descriptor for their user-facing label,
+    # while tools such as kscreen-doctor report the DRM connector separately.
+    edid[72:90] = _descriptor(0xFC, b"Virtual-1\n")
     edid[90:108] = _descriptor(0xFD, bytes((24, 240, 30, 255, max_pixel_clock_units, 0, 0, 0)))
-    edid[108:126] = _descriptor(0x10, b"")
+    # KWin prefers an ASCII EISA descriptor over the required binary PNP ID.
+    # An intentionally blank optional descriptor prevents KDE from prepending
+    # the synthetic "MON" manufacturer code to the Virtual-1 model name.
+    edid[108:126] = _descriptor(0xFE, b"")
     edid[126] = 0
     edid[127] = (-sum(edid[:127])) & 0xFF
     validate_edid(edid)

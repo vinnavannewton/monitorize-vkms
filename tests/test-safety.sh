@@ -50,12 +50,18 @@ assert_contains "${ROOT}/install.sh" 'install_bootstrap_service'
 assert_contains "${ROOT}/install.sh" 'install_cli_and_tools'
 assert_contains "${ROOT}/uninstall.sh" 'remove_cli_and_tools'
 assert_contains "${ROOT}/packaging/io.github.vinnavannewton.monitorize-vkms.policy" 'monitorize-vkms-helper'
+assert_contains "${ROOT}/packaging/io.github.vinnavannewton.monitorize-vkms.policy" 'org.freedesktop.policykit.exec.argv1">create-custom'
+assert_contains "${ROOT}/packaging/io.github.vinnavannewton.monitorize-vkms.policy" 'org.freedesktop.policykit.exec.argv1">destroy'
+assert_contains "${ROOT}/packaging/io.github.vinnavannewton.monitorize-vkms.policy" '<action id="io.github.vinnavannewton.monitorize-vkms.destroy">'
+assert_contains "${ROOT}/packaging/io.github.vinnavannewton.monitorize-vkms.policy" '<allow_active>yes</allow_active>'
 assert_not_contains "${ROOT}/install.sh" 'systemctl start monitorize-vkms-bootstrap.service'
 assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'Before=display-manager.service'
 assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'Requires=sys-kernel-config.mount'
 assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'After=sys-kernel-config.mount'
 assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${CONNECTOR}/dynamic\""
-assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '0' > \"\${CONNECTOR}/enabled\""
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '2' > \"\${CONNECTOR}/status\""
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${CONNECTOR}/edid_enabled\""
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${CONNECTOR}/enabled\""
 assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" 'find_monitorize_drm_card'
 
 printf 'monitorize-vkms safety checks passed\n'

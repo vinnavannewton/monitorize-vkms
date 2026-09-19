@@ -34,8 +34,12 @@ class TestEdidGenerator(unittest.TestCase):
                 self.assertEqual(sum(edid) % 256, 0)
                 self.assertEqual(edid[126], 0)  # No extensions
 
-                # Verify descriptor contains MONITORIZE
-                self.assertIn(b"MONITORIZE", edid[72:90])
+                # KDE uses this descriptor as the user-facing monitor model.
+                self.assertEqual(edid[77:90].rstrip(b" \n"), b"Virtual-1")
+                # Keep KDE's vendor field empty so the display label is exactly
+                # Virtual-1 instead of the synthetic "MON Virtual-1".
+                self.assertEqual(edid[108:113], b"\x00\x00\x00\xfe\x00")
+                self.assertEqual(edid[113:126].strip(), b"")
 
                 # Validate range descriptor
                 max_mhz = parse_range_pixel_clock_mhz(edid)

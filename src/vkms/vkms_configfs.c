@@ -1350,11 +1350,15 @@ static ssize_t connector_enabled_store(struct config_item *item,
 			if (!was_enabled && enabled) {
 				// Adding the connector
 				connector_cfg->connector = vkms_connector_hot_add(connector->dev->config->dev,
-										  connector_cfg);
+									  connector_cfg);
 				if (IS_ERR(connector_cfg->connector)) {
 					count = PTR_ERR(connector_cfg->connector);
 					goto rollback;
 				}
+				/* Registering a dynamic connector alone does not make userspace
+				 * re-probe it. Announce it only after connector_cfg->connector is
+				 * valid, so detect() can report the configured status and EDID. */
+				vkms_trigger_connector_hotplug(connector->dev->config->dev);
 			} else if (was_enabled && !enabled) {
 				vkms_connector_hot_remove(connector->dev->config->dev,
 							  connector_cfg->connector);

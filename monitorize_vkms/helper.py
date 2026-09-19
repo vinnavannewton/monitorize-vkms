@@ -15,6 +15,8 @@ INSTANCE_NAMES = {
     "primary": "monitorize",
 }
 CUSTOM_MODULE_NAME = "monitorize_vkms"
+CONNECTOR_STATUS_CONNECTED = "1"
+CONNECTOR_STATUS_DISCONNECTED = "2"
 MODULE_PATHS = {
     CUSTOM_MODULE_NAME: Path(f"/sys/module/{CUSTOM_MODULE_NAME}"),
 }
@@ -140,34 +142,37 @@ def _probe_custom_edid_support(root: Path, logs: list[str]) -> bool:
     return supported
 
 
-def _disable_connector(connector: Path, logs: list[str]) -> bool:
+def _disconnect_connector(connector: Path, logs: list[str]) -> bool:
     if _read(connector / "enabled") != "1":
+        raise VkmsHelperError(
+            "The persistent Monitorize VKMS connector is not registered. Reinstall and reboot."
+        )
+    if _read(connector / "status") == CONNECTOR_STATUS_DISCONNECTED:
         return False
-    logs.append("Disabling stale dynamic Monitorize VKMS connector")
-    _write(connector / "enabled", "0")
+    logs.append("Disconnecting persistent Monitorize VKMS connector")
+    _write(connector / "status", CONNECTOR_STATUS_DISCONNECTED)
     return True
 
 
 def _enable_connector(connector: Path, logs: list[str], custom_edid: bytes | None) -> bool:
-    logs.append("Configuring dynamic Monitorize VKMS connector while disabled")
-    changed = _disable_connector(connector, logs)
+    logs.append("Configuring persistent Monitorize VKMS connector while disconnected")
+    _disconnect_connector(connector, logs)
     if custom_edid is not None:
         _validate_edid(custom_edid)
         edid = connector / "edid"
         edid_enabled = connector / "edid_enabled"
         if not edid.is_file() or not edid_enabled.is_file():
             raise CustomEdidUnsupported("The bootstrapped VKMS connector does not expose per-connector EDID support.")
-        logs.append("Writing validated custom EDID while connector is disabled")
+        logs.append("Writing validated custom EDID while connector is disconnected")
         _write_bytes(edid, custom_edid)
         _write(edid_enabled, "1")
         logs.append("Custom EDID written and enabled")
     else:
         _write(connector / "edid_enabled", "0")
-    _write(connector / "status", "1")
-    logs.append("Enabling dynamic Monitorize VKMS connector")
-    _write(connector / "enabled", "1")
-    if _read(connector / "enabled") != "1":
-        raise VkmsHelperError("Dynamic Monitorize VKMS connector did not enable.")
+    logs.append("Connecting persistent Monitorize VKMS connector")
+    _write(connector / "status", CONNECTOR_STATUS_CONNECTED)
+    if _read(connector / "status") != CONNECTOR_STATUS_CONNECTED:
+        raise VkmsHelperError("Persistent Monitorize VKMS connector did not connect.")
     return True
 
 
@@ -202,7 +207,7 @@ def main() -> int:
             raise VkmsHelperError("Custom VKMS EDID payload is not valid base64.") from exc
         changed = _enable_connector(connector, logs, custom_edid)
     elif args.operation == "destroy":
-        changed = _disable_connector(connector, logs)
+        changed = _disconnect_connector(connector, logs)
     elif args.operation == "capability":
         capability = "supported" if _probe_custom_edid_support(root, logs) else "unsupported"
         response["capability"] = capability
@@ -214,6 +219,9 @@ def main() -> int:
             edid_enabled = _read(connector / "edid_enabled") == "1"
         
         response["connector_enabled"] = connector_enabled
+        response["connector_connected"] = (
+            _read(connector / "status") == CONNECTOR_STATUS_CONNECTED
+        )
         response["edid_enabled"] = edid_enabled
         response["edid_supported"] = edid_supported
 
