@@ -235,7 +235,9 @@ struct vkms_output *vkms_crtc_init(struct drm_device *dev, struct drm_plane *pri
 
 	drm_crtc_enable_color_mgmt(crtc, 0, false, VKMS_LUT_SIZE);
 
+#if VKMS_OOT_HAS_DRM_BACKGROUND_COLOR
 	drm_crtc_attach_background_color_property(crtc);
+#endif
 
 	spin_lock_init(&vkms_out->lock);
 	spin_lock_init(&vkms_out->composer_lock);
