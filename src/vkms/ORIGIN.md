@@ -36,3 +36,10 @@ out-of-tree compatibility layer, included only by `vkms_config.c`. It replaces
 diagnostic DRM naming helpers unavailable to an external module; no functional
 DRM behavior is replaced. Generic DRM patch 6 is intentionally not required
 because Monitorize uses the zero-degree default rotation.
+
+The external-module build probes the target kernel for the optional CRTC
+background-color API, including its state field, RGB helpers and exported
+attachment function. Kernels without that API do not expose BACKGROUND_COLOR;
+composition uses opaque black, matching the DRM default. Kernels with the
+complete API retain upstream configurable-background behavior. The generated
+`vkms_oot_features.h` also selects the DRM atomic aggregate type.

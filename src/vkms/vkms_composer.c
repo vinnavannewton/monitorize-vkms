@@ -16,6 +16,7 @@
 
 #include "vkms_composer.h"
 #include "vkms_luts.h"
+#include "vkms_oot_features.h"
 
 static u16 pre_mul_blend_channel(u16 src, u16 dst, u16 alpha)
 {
@@ -475,6 +476,7 @@ static void blend(struct vkms_writeback_job *wb,
 {
 	struct vkms_plane_state **plane = crtc_state->active_planes;
 	u32 n_active_planes = crtc_state->num_active_planes;
+#if VKMS_OOT_HAS_DRM_BACKGROUND_COLOR
 	u64 bgcolor = crtc_state->base.background_color;
 
 	const struct pixel_argb_u16 background_color = {
@@ -483,6 +485,10 @@ static void blend(struct vkms_writeback_job *wb,
 		.g = DRM_ARGB64_GETG(bgcolor),
 		.b = DRM_ARGB64_GETB(bgcolor),
 	};
+#else
+	/* DRM assumes opaque black when BACKGROUND_COLOR is not exposed. */
+	const struct pixel_argb_u16 background_color = { .a = 0xffff };
+#endif
 
 	int crtc_y_limit = crtc_state->base.mode.vdisplay;
 	int crtc_x_limit = crtc_state->base.mode.hdisplay;
