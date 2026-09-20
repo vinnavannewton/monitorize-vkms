@@ -160,12 +160,15 @@ def cmd_create(args: argparse.Namespace) -> int:
                 print("\nCleaning up virtual display...")
             try:
                 deactivate_in_compositor(desktop, before_comp)
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"Cleanup refused; VKMS remains connected: {exc}", file=sys.stderr)
+                return False
             try:
                 helper_response("destroy")
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"VKMS disconnect failed: {exc}", file=sys.stderr)
+                return False
+            return True
 
         def _stop_from_signal(*_):
             raise KeyboardInterrupt
@@ -183,7 +186,9 @@ def cmd_create(args: argparse.Namespace) -> int:
         except KeyboardInterrupt:
             pass
         finally:
-            _cleanup()
+            cleanup_ok = _cleanup()
+        if not cleanup_ok:
+            return 1
 
     return 0
 
@@ -194,8 +199,11 @@ def cmd_remove(args: argparse.Namespace) -> int:
     try:
         deactivate_in_compositor(desktop, before_comp)
     except Exception as exc:
-        if not args.json:
-            print(f"Warning: compositor cleanup encountered: {exc}", file=sys.stderr)
+        message = f"Removal refused; VKMS remains connected: {exc}"
+        if args.json:
+            return _json_error(message, "compositor_error")
+        print(message, file=sys.stderr)
+        return 1
 
     try:
         helper_res = helper_response("destroy")
