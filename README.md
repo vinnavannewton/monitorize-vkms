@@ -2,7 +2,7 @@
 
 Standalone virtual display tool and out-of-tree VKMS kernel module for Linux.
 
-`monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates (such as `2340x1080@60`, `2340x1600@60`, or `1920x1080@144`), complete with dynamic EDID generation and automatic compositor layout integration (GNOME Mutter & KDE Plasma).
+`monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates, complete with dynamic EDID generation and automatic compositor layout integration (GNOME  & KDE Plasma).
 
 It can be used as a **standalone CLI tool** or as the backend for [Monitorize](https://github.com/vinnavannewton/monitorize).
 
@@ -29,50 +29,6 @@ monitorize-vkms doctor
 monitorize-vkms remove
 ```
 
-### Foreground Mode (Streaming & Script Integration)
-
-Run with `-f` or `--foreground` to keep the display active while the process runs, automatically destroying it when closed (or on `SIGINT` / `SIGTERM` / stdin EOF):
-
-```sh
-monitorize-vkms create 1920x1080@60 --foreground
-```
-
-### JSON Output
-
-All commands support `--json` for machine-readable automation:
-
-```sh
-monitorize-vkms status --json
-monitorize-vkms list --json
-monitorize-vkms doctor --json
-monitorize-vkms create 2340x1080@60 --json
-```
-
----
-
-## Architecture & Security
-
-`monitorize-vkms` uses a **persistent topology, privilege-separated** architecture:
-
-1. **Persistent DRM Device**: The `monitorize-vkms-bootstrap.service` systemd unit creates a persistent DRM card (`cardX` linked to `/sys/devices/faux/monitorize`) before the display manager starts. This ensures the display manager and compositors recognize the card safely at startup.
-2. **Persistent Connector Registration**: The virtual monitor connector (`connector0`) is registered before the display manager starts but reports `disconnected`. This makes the card KMS-capable during compositor discovery. Create/remove operations change connector status and EDID without unregistering it, so KWin continues tracking the DRM card.
-3. **Custom EDID Generation**: When a resolution is requested, `monitorize-vkms` generates a valid 128-byte VESA EDID 1.4 block with standard CVT timing.
-4. **Privilege Separation**: The CLI runs as an unprivileged user. Writes to `/sys/kernel/config/vkms` are mediated by a dedicated privileged helper (`/usr/libexec/monitorize-vkms/monitorize-vkms-helper`) with operation-scoped Polkit actions. Creating a display requires administrator authorization; an active local session may stop its fixed Monitorize display without another prompt.
-5. **Compositor Integration**:
-   - **GNOME Wayland**: Automatically configured via Mutter's D-Bus `org.gnome.Mutter.DisplayConfig` interface.
-   - **KDE Plasma Wayland**: Automatically configured via `kscreen-doctor`.
-
----
-
-## Compatibility Status
-
-- **Tested Distro**: Fedora 44 (`x86_64`)
-- **Kernel Support**: Linux 6.1+ through current mainline / Fedora kernels
-- **Desktops**: GNOME Shell / Mutter, KDE Plasma / KWin, Hyprland, Sway
-- **Safety**: Out-of-tree module named `monitorize_vkms.ko`; distro `vkms.ko` is never overwritten or relocated.
-
-The installer recognizes Fedora/RHEL-like, Debian/Ubuntu, Arch, and openSUSE systems. NixOS is intentionally unsupported.
-
 ---
 
 ## Prerequisites
@@ -83,8 +39,6 @@ Install DKMS, GCC, Make, and the matching kernel headers for your running kernel
 # Verify kernel headers are present:
 test -f "/lib/modules/$(uname -r)/build/Makefile"
 ```
-
-The installer deliberately does not invoke package managers (DNF, APT, Pacman, Zypper) to prevent unintended kernel upgrades.
 
 ---
 
@@ -98,6 +52,7 @@ sudo reboot
 ```
 
 The installer:
+
 1. Compiles a disposable compatibility preflight before modifying anything.
 2. Stages and builds `monitorize_vkms.ko` via DKMS without touching stock `vkms.ko`.
 3. Installs the persistent bootstrap service (`monitorize-vkms-bootstrap.service`).
@@ -119,13 +74,6 @@ Or run the low-level verification script:
 
 ```sh
 ./scripts/verify-install.sh
-```
-
-To run unit tests without hardware:
-
-```sh
-python3 -m unittest discover -s tests -v
-bash tests/test-safety.sh
 ```
 
 ---
