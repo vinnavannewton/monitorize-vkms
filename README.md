@@ -100,6 +100,25 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 
 ## Documentation
 
+Wayland compositors other than GNOME/KDE require `wlr-randr` with `--json`
+support and the `zwlr_output_manager_v1` protocol. Support is probed through
+the actual protocol connection, including for unrecognized Wayland desktops.
+Removal disables the exact Monitorize output and confirms its disabled state
+before disconnecting it in configfs. Failed, unsupported, ambiguous, or timed-out
+requests leave the kernel connector connected and return an error. Removing the
+last enabled compositor output is refused. Creation re-enables a previously
+disabled output. The DRM card and topology remain persistent.
+
+This ordering requires live validation on each compositor. Protocol confirmation
+does not guarantee completion of internal renderer cleanup. Hyprland 0.56.2 with
+Aquamarine 0.15.0 has crashed on output disable itself, before kernel disconnect.
+Live removal is therefore blocked in Hyprland until a compositor fix is validated:
+the command returns an error and leaves the display connected. Log out of Hyprland
+before removing it from a separate text console. This is crash containment, not a
+working live-removal fix. No compositor restart or alternate virtual display is
+used as a fallback. Hyprland uses Aquamarine, so this failure is not proof of the
+same bug in wlroots compositors such as Sway.
+
 - [Development and manual testing](docs/DEVELOPMENT.md)
 - [Upstream tracking](docs/UPSTREAM.md)
 - [Source provenance](src/vkms/ORIGIN.md)

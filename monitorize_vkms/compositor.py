@@ -960,7 +960,7 @@ def activate_in_compositor(
             refresh,
             expected_output_name=expected_output_name,
         )
-    elif desktop is None:
+    elif desktop is None and not os.environ.get("WAYLAND_DISPLAY"):
         return (
             True,
             {
@@ -972,16 +972,21 @@ def activate_in_compositor(
             f"No active compositor detected; display created on DRM card",
         )
     else:
-        # Hyprland / Sway or other - auto-detected or managed by user compositor rules
+        from .wlr_output import set_enabled
+        from .drm import monitorize_drm_connectors
+
+        if expected_output_name not in monitorize_drm_connectors():
+            raise CompositorError("Cannot identify the Monitorize DRM output for activation.")
+        set_enabled(expected_output_name, True)
         return (
             True,
             {
-                "name": "Virtual-Auto",
+                "name": expected_output_name,
                 "width": width,
                 "height": height,
                 "refresh_rate": refresh,
             },
-            f"{desktop.capitalize()} auto-detects new DRM connectors",
+            "Wayland output management confirmed the Monitorize output is enabled",
         )
 
 
@@ -989,4 +994,29 @@ def deactivate_in_compositor(desktop: str | None, before_state: Any) -> bool:
     """Clean up / remove virtual display from compositor layout."""
     if desktop == "gnome":
         return gnome_deactivate_vkms(before_state or {})
+    if desktop != "kde" and (desktop or os.environ.get("WAYLAND_DISPLAY")):
+        from .drm import monitorize_drm_connectors
+        from .wlr_output import set_enabled
+
+        connectors = monitorize_drm_connectors()
+        targets = [name for name, entry in connectors.items() if entry["status"] != "disconnected"]
+        if len(targets) > 1:
+            raise CompositorError("Multiple Monitorize connectors found; refusing ambiguous removal.")
+        # Hyprland 0.56.2 / Aquamarine 0.15.0 crashes on output disable itself,
+        # before the configfs disconnect. Protocol acknowledgement cannot make
+        # that renderer teardown safe. Fail closed until a backend fix is
+        # validated; do not bypass this using a direct kernel disconnect.
+        if targets and (desktop == "hyprland" or os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")):
+            raise CompositorError(
+                "Live VKMS removal is blocked on Hyprland: disabling or disconnecting "
+                "this output can crash Aquamarine's EGL renderer. The display has "
+                "been left connected. Log out of Hyprland before removing it from "
+                "a separate text console. A validated compositor fix is required "
+                "to enable live removal."
+            )
+        for name in targets:
+            if not name.startswith("Virtual-"):
+                raise CompositorError("Unexpected Monitorize connector identity.")
+            log.info("Disabling %s through Wayland output management before disconnect", name)
+            set_enabled(name, False)
     return True
