@@ -453,8 +453,19 @@ def _build_vkms_activation_config(
         _serial, physical_monitors, logical_monitors, _properties = state
     except (TypeError, ValueError):
         return None, {}, "Mutter returned incomplete DisplayConfig state"
-    if connector in logical_connector_names(state):
-        return None, {}, f"{connector} is already active in Mutter's layout"
+    # Mutter may auto-enable a newly hotplugged connector before we get here.
+    # Replace its logical entry instead of treating our own display as a conflict.
+    existing = None
+    preserved = []
+    for logical in logical_monitors:
+        names = _logical_connector_names(logical)
+        if connector in names:
+            if len(names) != 1:
+                return None, {}, "Refusing to reconfigure a VKMS connector mirrored with another display"
+            existing = logical
+        else:
+            preserved.append(logical)
+    logical_monitors = preserved
     selected, error = _select_vkms_mode(
         state, connector, width, height, refresh
     )
@@ -511,6 +522,12 @@ def _build_vkms_activation_config(
             return None, {}, "Mutter rejected an existing display configuration"
         configs.append(config)
 
+    x, y, transform, primary = right_edge, 0, 0, False
+    if existing is not None:
+        x, y, old_scale, transform, primary = existing[:5]
+        if float(old_scale) in [float(value) for value in selected[5]]:
+            scale = float(old_scale)
+
     selected_mode_id = str(selected[0])
     virtual_config = _monitor_config(
         dbus,
@@ -519,11 +536,11 @@ def _build_vkms_activation_config(
         monitor_properties.get(connector, {}),
     )
     values = [
-        _typed(dbus, "Int32", right_edge),
-        _typed(dbus, "Int32", 0),
+        _typed(dbus, "Int32", x),
+        _typed(dbus, "Int32", y),
         _typed(dbus, "Double", scale),
-        _typed(dbus, "UInt32", 0),
-        _typed(dbus, "Boolean", False),
+        _typed(dbus, "UInt32", transform),
+        _typed(dbus, "Boolean", primary),
         (
             dbus.Array([virtual_config], signature="(ssa{sv})")
             if hasattr(dbus, "Array")
@@ -547,8 +564,8 @@ def _build_vkms_activation_config(
         "refresh_rate": float(selected[3]),
         "mode_id": selected_mode_id,
         "scale": scale,
-        "x": right_edge,
-        "y": 0,
+        "x": x,
+        "y": y,
     }
     return payload, details, ""
 

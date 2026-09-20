@@ -136,13 +136,15 @@ check_replaceable_module() {
 }
 
 check_secure_boot() {
-	if ! command -v mokutil >/dev/null; then
-		if [[ -d /sys/firmware/efi ]]; then
-			die "mokutil is required to determine Secure Boot state on this EFI system"
-		fi
+	# Legacy BIOS guests have no EFI variables, even if mokutil is installed.
+	if [[ ! -d /sys/firmware/efi ]]; then
 		SECURE_BOOT_STATE="disabled"
 		log "Secure Boot state: disabled (non-EFI boot)"
 		return
+	fi
+
+	if ! command -v mokutil >/dev/null; then
+		die "mokutil is required to determine Secure Boot state on this EFI system"
 	fi
 
 	local state
