@@ -1,4 +1,4 @@
-"""Compositor detection and virtual display activation (GNOME & KDE)."""
+"""Desktop detection and virtual display activation."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -22,6 +23,7 @@ VKMS_DISCOVERY_ATTEMPTS = 100
 VKMS_ACTIVATION_ATTEMPTS = 30
 VKMS_APPLY_RETRIES = 2
 REFRESH_RATE_TOLERANCE_HZ = 0.75
+XRANDR_WAIT_ATTEMPTS = 100
 
 MONITOR_CONFIG_PROPERTY_KEYS = {
     "color-mode",
@@ -35,12 +37,17 @@ GLOBAL_CONFIG_PROPERTY_KEYS = {
 
 def detect_compositor() -> str | None:
     """Detect current running Wayland/X11 compositor or desktop environment."""
-    current_desktop = (
-        os.environ.get("XDG_CURRENT_DESKTOP")
-        or os.environ.get("XDG_SESSION_DESKTOP")
-        or ""
+    current_desktop = ":".join(
+        value
+        for value in (
+            os.environ.get("XDG_CURRENT_DESKTOP"),
+            os.environ.get("XDG_SESSION_DESKTOP"),
+        )
+        if value
     ).lower()
 
+    if "cinnamon" in current_desktop:
+        return "cinnamon"
     if "gnome" in current_desktop:
         return "gnome"
     if "kde" in current_desktop or "plasma" in current_desktop:
@@ -50,7 +57,8 @@ def detect_compositor() -> str | None:
     if "sway" in current_desktop:
         return "sway"
 
-    if os.environ.get("GNOME_DESKTOP_SESSION_ID"):
+    gnome_session = os.environ.get("GNOME_DESKTOP_SESSION_ID", "").lower()
+    if gnome_session and gnome_session not in {"deprecated", "this-is-deprecated"}:
         return "gnome"
     if os.environ.get("KDE_FULL_SESSION") == "true":
         return "kde"
@@ -60,6 +68,15 @@ def detect_compositor() -> str | None:
         return "sway"
 
     return None
+
+
+def _is_x11_session() -> bool:
+    session_type = os.environ.get("XDG_SESSION_TYPE", "").lower()
+    return session_type == "x11" or (
+        not session_type
+        and bool(os.environ.get("DISPLAY"))
+        and not os.environ.get("WAYLAND_DISPLAY")
+    )
 
 
 # =========================================================================
@@ -81,12 +98,17 @@ def _require_dbus():
 
 def _display_config_interface(bus=None, dbus=None):
     dbus = dbus or _require_dbus()
-    bus = bus or dbus.SessionBus()
-    obj = bus.get_object(
-        "org.gnome.Mutter.DisplayConfig",
-        "/org/gnome/Mutter/DisplayConfig",
-    )
-    return dbus.Interface(obj, "org.gnome.Mutter.DisplayConfig")
+    try:
+        bus = bus or dbus.SessionBus()
+        obj = bus.get_object(
+            "org.gnome.Mutter.DisplayConfig",
+            "/org/gnome/Mutter/DisplayConfig",
+        )
+        return dbus.Interface(obj, "org.gnome.Mutter.DisplayConfig")
+    except Exception as exc:
+        raise CompositorError(
+            f"GNOME Mutter DisplayConfig is unavailable: {exc}"
+        ) from exc
 
 
 def _mutter_state(display_config=None):
@@ -819,6 +841,264 @@ def gnome_deactivate_vkms(
 
 
 # =========================================================================
+# Cinnamon / X11 / XRandR Integration
+# =========================================================================
+
+
+def _parse_xrandr_outputs(output: str) -> list[dict[str, Any]]:
+    """Parse output and advertised modes from ``xrandr --query``."""
+    outputs: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    for line in output.splitlines():
+        header = re.match(r"^(\S+)\s+(connected|disconnected)\b", line)
+        if header:
+            geometry = re.search(
+                r"(?:^|\s)(\d+)x(\d+)\+(-?\d+)\+(-?\d+)(?:\s|$)", line
+            )
+            current = {
+                "name": header.group(1),
+                "connected": header.group(2) == "connected",
+                "primary": bool(re.search(r"\bprimary\b", line)),
+                "active": geometry is not None,
+                "width": int(geometry.group(1)) if geometry else None,
+                "height": int(geometry.group(2)) if geometry else None,
+                "x": int(geometry.group(3)) if geometry else None,
+                "y": int(geometry.group(4)) if geometry else None,
+                "modes": [],
+            }
+            outputs.append(current)
+            continue
+
+        if current is None:
+            continue
+        mode_line = re.match(r"^\s+(\d+)x(\d+)\S*\s+(.+)$", line)
+        if not mode_line:
+            continue
+        mode_name = line.split()[0]
+        rates = []
+        for token in mode_line.group(3).split():
+            cleaned = token.rstrip("*+")
+            try:
+                rate = float(cleaned)
+            except ValueError:
+                continue
+            rates.append({"rate": rate, "current": "*" in token})
+        current["modes"].append(
+            {
+                "name": mode_name,
+                "width": int(mode_line.group(1)),
+                "height": int(mode_line.group(2)),
+                "rates": rates,
+            }
+        )
+
+    return outputs
+
+
+def xrandr_outputs() -> list[dict[str, Any]]:
+    """Return the X server's current RandR output state."""
+    executable = shutil.which("xrandr")
+    if not executable:
+        raise CompositorError(
+            "xrandr is required to activate a virtual display in Cinnamon/X11"
+        )
+    try:
+        result = subprocess.run(
+            [executable, "--query"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception as exc:
+        raise CompositorError(f"Could not query XRandR output state: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise CompositorError(f"Could not query XRandR output state: {detail}")
+    return _parse_xrandr_outputs(result.stdout)
+
+
+def _xrandr_mode(
+    output: dict[str, Any], width: int, height: int, refresh: float
+) -> tuple[str, float] | None:
+    candidates = []
+    for mode in output.get("modes", []):
+        if mode.get("width") != width or mode.get("height") != height:
+            continue
+        for rate in mode.get("rates", []):
+            difference = abs(float(rate["rate"]) - refresh)
+            if difference <= REFRESH_RATE_TOLERANCE_HZ:
+                candidates.append((difference, str(mode["name"]), float(rate["rate"])))
+    if not candidates:
+        return None
+    _difference, name, rate = min(candidates)
+    return name, rate
+
+
+def xrandr_activate_vkms(
+    _before_outputs: list[dict[str, Any]],
+    width: int,
+    height: int,
+    refresh: float,
+    expected_output_name: str | None,
+) -> tuple[bool, dict[str, Any], str]:
+    """Enable a Monitorize output in an X11 desktop using XRandR."""
+    executable = shutil.which("xrandr")
+    if not executable:
+        return False, {}, "xrandr is required for Cinnamon/X11 activation"
+    if not expected_output_name:
+        return False, {}, "Cannot identify the Monitorize XRandR output"
+
+    output = None
+    current_outputs: list[dict[str, Any]] = []
+    for attempt in range(XRANDR_WAIT_ATTEMPTS):
+        current_outputs = xrandr_outputs()
+        output = next(
+            (
+                entry
+                for entry in current_outputs
+                if entry["name"] == expected_output_name and entry["connected"]
+            ),
+            None,
+        )
+        if output:
+            break
+        if attempt + 1 < XRANDR_WAIT_ATTEMPTS:
+            time.sleep(WAIT_DELAY)
+
+    if output is None:
+        return (
+            False,
+            {},
+            f"Xorg did not expose connected output {expected_output_name} within "
+            f"{XRANDR_WAIT_ATTEMPTS * WAIT_DELAY:g}s",
+        )
+
+    selected_mode = _xrandr_mode(output, width, height, refresh)
+    if selected_mode is None:
+        return (
+            False,
+            {},
+            f"XRandR output {expected_output_name} does not advertise "
+            f"{width}x{height}@{refresh:g}Hz",
+        )
+    mode_name, rate = selected_mode
+
+    reference = next(
+        (
+            entry
+            for entry in current_outputs
+            if entry["name"] != expected_output_name
+            and entry["active"]
+            and entry["primary"]
+        ),
+        None,
+    )
+    if reference is None:
+        reference = next(
+            (
+                entry
+                for entry in current_outputs
+                if entry["name"] != expected_output_name and entry["active"]
+            ),
+            None,
+        )
+
+    command = [
+        executable,
+        "--output",
+        expected_output_name,
+        "--mode",
+        mode_name,
+        "--rate",
+        f"{rate:g}",
+    ]
+    if reference:
+        command.extend(["--right-of", str(reference["name"])])
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception as exc:
+        return False, {}, f"Could not enable {expected_output_name} with XRandR: {exc}"
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        return False, {}, f"XRandR could not enable {expected_output_name}: {detail}"
+
+    for attempt in range(XRANDR_WAIT_ATTEMPTS):
+        verified = next(
+            (
+                entry
+                for entry in xrandr_outputs()
+                if entry["name"] == expected_output_name
+            ),
+            None,
+        )
+        if verified and verified["active"]:
+            details = {
+                "name": expected_output_name,
+                "width": int(verified["width"]),
+                "height": int(verified["height"]),
+                "refresh_rate": rate,
+            }
+            return (
+                True,
+                details,
+                f"Cinnamon/X11 activated {expected_output_name} at "
+                f"{width}x{height}@{rate:g}Hz",
+            )
+        if attempt + 1 < XRANDR_WAIT_ATTEMPTS:
+            time.sleep(WAIT_DELAY)
+
+    return False, {}, f"XRandR did not activate {expected_output_name}"
+
+
+def xrandr_deactivate_vkms(target_names: set[str]) -> bool:
+    """Disable active Monitorize outputs before disconnecting them in configfs."""
+    if not target_names:
+        return True
+    executable = shutil.which("xrandr")
+    if not executable:
+        raise CompositorError(
+            "xrandr is required to remove a virtual display in Cinnamon/X11"
+        )
+
+    outputs = xrandr_outputs()
+    active = {str(entry["name"]) for entry in outputs if entry["active"]}
+    active_targets = active & target_names
+    if active_targets and not (active - active_targets):
+        raise CompositorError("Refusing to disable the X11 desktop's last active output")
+
+    for name in sorted(active_targets):
+        try:
+            result = subprocess.run(
+                [executable, "--output", name, "--off"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except Exception as exc:
+            raise CompositorError(f"Could not disable {name} with XRandR: {exc}") from exc
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise CompositorError(f"XRandR could not disable {name}: {detail}")
+
+    remaining = {
+        str(entry["name"]) for entry in xrandr_outputs() if entry["active"]
+    }
+    if remaining & active_targets:
+        names = ", ".join(sorted(remaining & active_targets))
+        raise CompositorError(f"XRandR did not disable Monitorize output: {names}")
+    return True
+
+
+# =========================================================================
 # KDE Plasma / KWin Integration
 # =========================================================================
 
@@ -936,6 +1216,8 @@ def get_compositor_snapshot() -> tuple[str | None, Any]:
     elif desktop == "kde":
         outs = {str(o.get("name")) for o in kde_outputs() if o.get("name")}
         return "kde", outs
+    elif desktop == "cinnamon" and _is_x11_session():
+        return "cinnamon", xrandr_outputs()
     return desktop, None
 
 
@@ -959,6 +1241,14 @@ def activate_in_compositor(
             height,
             refresh,
             expected_output_name=expected_output_name,
+        )
+    elif desktop == "cinnamon" and _is_x11_session():
+        return xrandr_activate_vkms(
+            before_state or [],
+            width,
+            height,
+            refresh,
+            expected_output_name,
         )
     elif desktop is None and not os.environ.get("WAYLAND_DISPLAY"):
         return (
@@ -994,6 +1284,10 @@ def deactivate_in_compositor(desktop: str | None, before_state: Any) -> bool:
     """Clean up / remove virtual display from compositor layout."""
     if desktop == "gnome":
         return gnome_deactivate_vkms(before_state or {})
+    if desktop == "cinnamon" and _is_x11_session():
+        from .drm import monitorize_drm_connectors
+
+        return xrandr_deactivate_vkms(set(monitorize_drm_connectors()))
     if desktop != "kde" and (desktop or os.environ.get("WAYLAND_DISPLAY")):
         from .drm import monitorize_drm_connectors
         from .wlr_output import set_enabled

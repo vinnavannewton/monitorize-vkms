@@ -2,7 +2,7 @@
 
 Standalone virtual display tool and out-of-tree VKMS kernel module for Linux.
 
-`monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates, complete with dynamic EDID generation and automatic compositor layout integration (GNOME  & KDE Plasma).
+`monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates, complete with dynamic EDID generation and automatic desktop layout integration (GNOME, KDE Plasma, and Cinnamon/X11).
 
 It can be used as a **standalone CLI tool** or as the backend for [Monitorize](https://github.com/vinnavannewton/monitorize).
 
@@ -99,6 +99,11 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 ---
 
 ## Documentation
+
+Cinnamon/X11 uses `xrandr` to enable the exact Monitorize connector at the
+requested mode, place it to the right of the active primary output, and verify
+that Xorg activated it. Removal disables the output through XRandR before the
+kernel connector is disconnected.
 
 Wayland compositors other than GNOME/KDE require `wlr-randr` with `--json`
 support and the `zwlr_output_manager_v1` protocol. Support is probed through

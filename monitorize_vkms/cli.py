@@ -58,7 +58,13 @@ def cmd_create(args: argparse.Namespace) -> int:
     if not args.json:
         print(f"Creating virtual display {width}x{height}@{refresh:g}Hz...")
 
-    desktop, before_comp = get_compositor_snapshot()
+    try:
+        desktop, before_comp = get_compositor_snapshot()
+    except CompositorError as exc:
+        if args.json:
+            return _json_error(str(exc), "compositor_error")
+        print(f"Compositor Error: {exc}", file=sys.stderr)
+        return 1
     drm_before = set(monitorize_drm_connectors())
 
     try:
@@ -194,7 +200,14 @@ def cmd_create(args: argparse.Namespace) -> int:
 
 
 def cmd_remove(args: argparse.Namespace) -> int:
-    desktop, before_comp = get_compositor_snapshot()
+    try:
+        desktop, before_comp = get_compositor_snapshot()
+    except CompositorError as exc:
+        message = f"Removal refused; VKMS remains connected: {exc}"
+        if args.json:
+            return _json_error(message, "compositor_error")
+        print(message, file=sys.stderr)
+        return 1
 
     try:
         deactivate_in_compositor(desktop, before_comp)
@@ -441,7 +454,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "Desktop compositor detected",
         desktop is not None,
         f"Detected: {desktop}" if desktop else "No supported compositor detected (running headless or unknown session)",
-        "Log in to a GNOME or KDE Plasma Wayland session.",
+        "Use a supported GNOME, KDE Plasma, Cinnamon/X11, or wlroots session.",
     )
 
     all_passed = all(c["status"] == "PASS" for c in checks)
