@@ -7,16 +7,46 @@
 #include <drm/drm_plane.h>
 
 #include "vkms_drv.h"
+#include "vkms_oot_features.h"
 
 static const u64 supported_tfs =
 	BIT(DRM_COLOROP_1D_CURVE_SRGB_EOTF) |
 	BIT(DRM_COLOROP_1D_CURVE_SRGB_INV_EOTF);
 
+#if VKMS_OOT_HAS_DRM_COLOROP_FUNCS
 static const struct drm_colorop_funcs vkms_colorop_funcs = {
 	.destroy = drm_colorop_destroy,
 };
+#endif
 
 #define MAX_COLOR_PIPELINE_OPS 4
+
+static int vkms_oot_colorop_curve_1d_init(struct drm_device *dev,
+					  struct drm_colorop *colorop,
+					  struct drm_plane *plane)
+{
+#if VKMS_OOT_HAS_DRM_COLOROP_FUNCS
+	return drm_plane_colorop_curve_1d_init(dev, colorop, plane, &vkms_colorop_funcs,
+					      supported_tfs,
+					      DRM_COLOROP_FLAG_ALLOW_BYPASS);
+#else
+	return drm_plane_colorop_curve_1d_init(dev, colorop, plane, supported_tfs,
+					      DRM_COLOROP_FLAG_ALLOW_BYPASS);
+#endif
+}
+
+static int vkms_oot_colorop_ctm_3x4_init(struct drm_device *dev,
+					 struct drm_colorop *colorop,
+					 struct drm_plane *plane)
+{
+#if VKMS_OOT_HAS_DRM_COLOROP_FUNCS
+	return drm_plane_colorop_ctm_3x4_init(dev, colorop, plane, &vkms_colorop_funcs,
+					     DRM_COLOROP_FLAG_ALLOW_BYPASS);
+#else
+	return drm_plane_colorop_ctm_3x4_init(dev, colorop, plane,
+					     DRM_COLOROP_FLAG_ALLOW_BYPASS);
+#endif
+}
 
 static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_prop_enum_list *list)
 {
@@ -35,9 +65,7 @@ static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_pr
 		goto cleanup;
 	}
 
-	ret = drm_plane_colorop_curve_1d_init(dev, ops[i], plane, &vkms_colorop_funcs,
-					      supported_tfs,
-					      DRM_COLOROP_FLAG_ALLOW_BYPASS);
+	ret = vkms_oot_colorop_curve_1d_init(dev, ops[i], plane);
 	if (ret)
 		goto cleanup;
 
@@ -53,8 +81,7 @@ static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_pr
 		goto cleanup;
 	}
 
-	ret = drm_plane_colorop_ctm_3x4_init(dev, ops[i], plane, &vkms_colorop_funcs,
-					     DRM_COLOROP_FLAG_ALLOW_BYPASS);
+	ret = vkms_oot_colorop_ctm_3x4_init(dev, ops[i], plane);
 	if (ret)
 		goto cleanup;
 
@@ -70,8 +97,7 @@ static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_pr
 		goto cleanup;
 	}
 
-	ret = drm_plane_colorop_ctm_3x4_init(dev, ops[i], plane, &vkms_colorop_funcs,
-					     DRM_COLOROP_FLAG_ALLOW_BYPASS);
+	ret = vkms_oot_colorop_ctm_3x4_init(dev, ops[i], plane);
 	if (ret)
 		goto cleanup;
 
@@ -87,9 +113,7 @@ static int vkms_initialize_color_pipeline(struct drm_plane *plane, struct drm_pr
 		goto cleanup;
 	}
 
-	ret = drm_plane_colorop_curve_1d_init(dev, ops[i], plane, &vkms_colorop_funcs,
-					      supported_tfs,
-					      DRM_COLOROP_FLAG_ALLOW_BYPASS);
+	ret = vkms_oot_colorop_curve_1d_init(dev, ops[i], plane);
 	if (ret)
 		goto cleanup;
 

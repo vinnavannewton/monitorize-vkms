@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BackgroundColorProbeTest(unittest.TestCase):
-    def run_probe(self, error='', atomic_missing=False):
+    def run_probe(self, error='', atomic_missing=False, colorop_api='funcs'):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
             kernel = directory / 'kernel'
@@ -26,6 +26,15 @@ if module.name == 'background':
     assert 'drm_crtc_attach_background_color_property(NULL)' in source
     assert all('DRM_ARGB64_GET' + channel in source for channel in 'RGB')
     error = os.environ.get('PROBE_ERROR', '')
+elif module.name == 'colorop-funcs':
+    assert 'struct drm_colorop_funcs probe_colorop_funcs' in source
+    assert '&probe_colorop_funcs' in source
+    assert 'drm_colorop_destroy' in source
+    error = '' if os.environ['COLOROP_API'] == 'funcs' else 'incomplete type drm_colorop_funcs'
+elif module.name == 'colorop-legacy':
+    assert 'struct drm_colorop_funcs' not in source
+    assert 'drm_plane_colorop_curve_1d_init' in source
+    error = '' if os.environ['COLOROP_API'] == 'legacy' else 'unsupported colorop API'
 else:
     error = "probe.c:7: error: invalid use of undefined type 'struct drm_atomic_commit'" if os.environ.get('ATOMIC_MISSING') else ''
 if error:
@@ -36,6 +45,7 @@ if error:
             header = directory / 'features.h'
             header.write_text('previous header\n')
             env = dict(os.environ, PATH=f'{directory}:/usr/bin:/bin', PROBE_ERROR=error,
+                       COLOROP_API=colorop_api,
                        ATOMIC_MISSING='1' if atomic_missing else '')
             result = subprocess.run(['/bin/sh', str(ROOT / 'scripts/probe-drm-atomic-api.sh'),
                                      '--kdir', str(kernel), '--output', str(header)],
@@ -46,6 +56,18 @@ if error:
         result, header = self.run_probe()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('VKMS_OOT_HAS_DRM_BACKGROUND_COLOR 1', header)
+        self.assertIn('VKMS_OOT_HAS_DRM_COLOROP_FUNCS 1', header)
+
+    def test_legacy_colorop_api_uses_compatibility_calls(self):
+        result, header = self.run_probe(colorop_api='legacy')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('VKMS_OOT_HAS_DRM_COLOROP_FUNCS 0', header)
+
+    def test_unknown_colorop_api_fails_closed(self):
+        result, header = self.run_probe(colorop_api='broken')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('failed for both supported signatures', result.stderr)
+        self.assertEqual(header, 'previous header\n')
 
     def test_missing_optional_api_uses_fallback(self):
         errors = [
