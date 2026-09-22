@@ -42,4 +42,7 @@ background-color API, including its state field, RGB helpers and exported
 attachment function. Kernels without that API do not expose BACKGROUND_COLOR;
 composition uses opaque black, matching the DRM default. Kernels with the
 complete API retain upstream configurable-background behavior. The generated
-`vkms_oot_features.h` also selects the DRM atomic aggregate type.
+`vkms_oot_features.h` also selects the DRM atomic aggregate type and detects
+whether color-operation initializers use the Linux 7.1 callback argument. This
+keeps the same VKMS color pipeline buildable with both the earlier signature
+used by Linux 7.0 and the callback-based signature, including distro backports.
