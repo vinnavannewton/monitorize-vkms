@@ -846,7 +846,7 @@ def gnome_deactivate_vkms(
 
 
 def _parse_xrandr_outputs(output: str) -> list[dict[str, Any]]:
-    """Parse output and advertised modes from ``xrandr --query``."""
+    """Parse output, connector identity, and modes from ``xrandr --prop``."""
     outputs: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
 
@@ -865,12 +865,17 @@ def _parse_xrandr_outputs(output: str) -> list[dict[str, Any]]:
                 "height": int(geometry.group(2)) if geometry else None,
                 "x": int(geometry.group(3)) if geometry else None,
                 "y": int(geometry.group(4)) if geometry else None,
+                "connector_id": None,
                 "modes": [],
             }
             outputs.append(current)
             continue
 
         if current is None:
+            continue
+        connector_id = re.match(r"^\s*CONNECTOR_ID:\s+(\d+)\s*$", line)
+        if connector_id:
+            current["connector_id"] = int(connector_id.group(1))
             continue
         mode_line = re.match(r"^\s+(\d+)x(\d+)\S*\s+(.+)$", line)
         if not mode_line:
@@ -905,7 +910,7 @@ def xrandr_outputs() -> list[dict[str, Any]]:
         )
     try:
         result = subprocess.run(
-            [executable, "--query"],
+            [executable, "--query", "--prop"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -936,33 +941,61 @@ def _xrandr_mode(
     return name, rate
 
 
+def _xrandr_connector_matches(
+    outputs: list[dict[str, Any]],
+    expected_output_name: str | None,
+    expected_connector_id: int | None,
+) -> list[dict[str, Any]]:
+    """Resolve a DRM connector to XRandR, preferring its stable kernel ID."""
+    if expected_connector_id is not None:
+        return [
+            output
+            for output in outputs
+            if output.get("connector_id") == expected_connector_id
+        ]
+    if expected_output_name:
+        return [
+            output
+            for output in outputs
+            if output.get("name") == expected_output_name
+        ]
+    return []
+
+
+def _xrandr_current_rate(output: dict[str, Any]) -> float | None:
+    for mode in output.get("modes", []):
+        for rate in mode.get("rates", []):
+            if rate.get("current"):
+                return float(rate["rate"])
+    return None
+
+
 def xrandr_activate_vkms(
     _before_outputs: list[dict[str, Any]],
     width: int,
     height: int,
     refresh: float,
     expected_output_name: str | None,
+    expected_connector_id: int | None = None,
 ) -> tuple[bool, dict[str, Any], str]:
     """Enable a Monitorize output in an X11 desktop using XRandR."""
     executable = shutil.which("xrandr")
     if not executable:
         return False, {}, "xrandr is required for Cinnamon/X11 activation"
-    if not expected_output_name:
+    if not expected_output_name and expected_connector_id is None:
         return False, {}, "Cannot identify the Monitorize XRandR output"
 
     output = None
     current_outputs: list[dict[str, Any]] = []
     for attempt in range(XRANDR_WAIT_ATTEMPTS):
         current_outputs = xrandr_outputs()
-        output = next(
-            (
-                entry
-                for entry in current_outputs
-                if entry["name"] == expected_output_name and entry["connected"]
-            ),
-            None,
+        matches = _xrandr_connector_matches(
+            current_outputs, expected_output_name, expected_connector_id
         )
-        if output:
+        if len(matches) > 1:
+            return False, {}, "Multiple XRandR outputs have the Monitorize connector ID"
+        output = matches[0] if matches and matches[0]["connected"] else None
+        if output is not None:
             break
         if attempt + 1 < XRANDR_WAIT_ATTEMPTS:
             time.sleep(WAIT_DELAY)
@@ -971,16 +1004,18 @@ def xrandr_activate_vkms(
         return (
             False,
             {},
-            f"Xorg did not expose connected output {expected_output_name} within "
+            f"Xorg did not expose the Monitorize connector within "
             f"{XRANDR_WAIT_ATTEMPTS * WAIT_DELAY:g}s",
         )
+
+    output_name = str(output["name"])
 
     selected_mode = _xrandr_mode(output, width, height, refresh)
     if selected_mode is None:
         return (
             False,
             {},
-            f"XRandR output {expected_output_name} does not advertise "
+            f"XRandR output {output_name} does not advertise "
             f"{width}x{height}@{refresh:g}Hz",
         )
     mode_name, rate = selected_mode
@@ -989,7 +1024,7 @@ def xrandr_activate_vkms(
         (
             entry
             for entry in current_outputs
-            if entry["name"] != expected_output_name
+            if entry["name"] != output_name
             and entry["active"]
             and entry["primary"]
         ),
@@ -1000,7 +1035,7 @@ def xrandr_activate_vkms(
             (
                 entry
                 for entry in current_outputs
-                if entry["name"] != expected_output_name and entry["active"]
+                if entry["name"] != output_name and entry["active"]
             ),
             None,
         )
@@ -1008,7 +1043,7 @@ def xrandr_activate_vkms(
     command = [
         executable,
         "--output",
-        expected_output_name,
+        output_name,
         "--mode",
         mode_name,
         "--rate",
@@ -1025,42 +1060,50 @@ def xrandr_activate_vkms(
             check=False,
         )
     except Exception as exc:
-        return False, {}, f"Could not enable {expected_output_name} with XRandR: {exc}"
+        return False, {}, f"Could not enable {output_name} with XRandR: {exc}"
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
-        return False, {}, f"XRandR could not enable {expected_output_name}: {detail}"
+        return False, {}, f"XRandR could not enable {output_name}: {detail}"
 
     for attempt in range(XRANDR_WAIT_ATTEMPTS):
-        verified = next(
-            (
-                entry
-                for entry in xrandr_outputs()
-                if entry["name"] == expected_output_name
-            ),
-            None,
+        verified_matches = _xrandr_connector_matches(
+            xrandr_outputs(), expected_output_name, expected_connector_id
         )
-        if verified and verified["active"]:
+        if len(verified_matches) > 1:
+            return False, {}, "Multiple XRandR outputs have the Monitorize connector ID"
+        verified = verified_matches[0] if verified_matches else None
+        current_rate = _xrandr_current_rate(verified) if verified else None
+        if (
+            verified
+            and verified["active"]
+            and verified["width"] == width
+            and verified["height"] == height
+            and current_rate is not None
+            and abs(current_rate - refresh) <= REFRESH_RATE_TOLERANCE_HZ
+        ):
             details = {
-                "name": expected_output_name,
+                "name": str(verified["name"]),
                 "width": int(verified["width"]),
                 "height": int(verified["height"]),
-                "refresh_rate": rate,
+                "refresh_rate": current_rate,
             }
             return (
                 True,
                 details,
-                f"Cinnamon/X11 activated {expected_output_name} at "
-                f"{width}x{height}@{rate:g}Hz",
+                f"Cinnamon/X11 activated {verified['name']} at "
+                f"{width}x{height}@{current_rate:g}Hz",
             )
         if attempt + 1 < XRANDR_WAIT_ATTEMPTS:
             time.sleep(WAIT_DELAY)
 
-    return False, {}, f"XRandR did not activate {expected_output_name}"
+    return False, {}, f"XRandR did not activate {output_name} at the requested mode"
 
 
-def xrandr_deactivate_vkms(target_names: set[str]) -> bool:
+def xrandr_deactivate_vkms(
+    target_connectors: dict[str, int | None],
+) -> bool:
     """Disable active Monitorize outputs before disconnecting them in configfs."""
-    if not target_names:
+    if not target_connectors:
         return True
     executable = shutil.which("xrandr")
     if not executable:
@@ -1070,7 +1113,16 @@ def xrandr_deactivate_vkms(target_names: set[str]) -> bool:
 
     outputs = xrandr_outputs()
     active = {str(entry["name"]) for entry in outputs if entry["active"]}
-    active_targets = active & target_names
+    resolved_targets: set[str] = set()
+    for name, connector_id in target_connectors.items():
+        matches = _xrandr_connector_matches(outputs, name, connector_id)
+        if len(matches) > 1:
+            raise CompositorError(
+                f"Multiple XRandR outputs have Monitorize connector ID {connector_id}"
+            )
+        if matches:
+            resolved_targets.add(str(matches[0]["name"]))
+    active_targets = active & resolved_targets
     if active_targets and not (active - active_targets):
         raise CompositorError("Refusing to disable the X11 desktop's last active output")
 
@@ -1089,11 +1141,20 @@ def xrandr_deactivate_vkms(target_names: set[str]) -> bool:
             detail = result.stderr.strip() or result.stdout.strip()
             raise CompositorError(f"XRandR could not disable {name}: {detail}")
 
-    remaining = {
-        str(entry["name"]) for entry in xrandr_outputs() if entry["active"]
-    }
-    if remaining & active_targets:
-        names = ", ".join(sorted(remaining & active_targets))
+    remaining_outputs = xrandr_outputs()
+    remaining_targets: set[str] = set()
+    for name, connector_id in target_connectors.items():
+        matches = _xrandr_connector_matches(
+            remaining_outputs, name, connector_id
+        )
+        if len(matches) > 1:
+            raise CompositorError(
+                f"Multiple XRandR outputs have Monitorize connector ID {connector_id}"
+            )
+        if matches and matches[0]["active"]:
+            remaining_targets.add(str(matches[0]["name"]))
+    if remaining_targets:
+        names = ", ".join(sorted(remaining_targets))
         raise CompositorError(f"XRandR did not disable Monitorize output: {names}")
     return True
 
@@ -1228,6 +1289,7 @@ def activate_in_compositor(
     height: int,
     refresh: float,
     expected_output_name: str | None = None,
+    expected_connector_id: int | None = None,
 ) -> tuple[bool, dict[str, Any], str]:
     """Activate newly added virtual display in the active desktop compositor."""
     if desktop == "gnome":
@@ -1249,6 +1311,7 @@ def activate_in_compositor(
             height,
             refresh,
             expected_output_name,
+            expected_connector_id,
         )
     elif desktop is None and not os.environ.get("WAYLAND_DISPLAY"):
         return (
@@ -1287,7 +1350,10 @@ def deactivate_in_compositor(desktop: str | None, before_state: Any) -> bool:
     if desktop == "cinnamon" and _is_x11_session():
         from .drm import monitorize_drm_connectors
 
-        return xrandr_deactivate_vkms(set(monitorize_drm_connectors()))
+        connectors = monitorize_drm_connectors()
+        return xrandr_deactivate_vkms(
+            {name: entry.get("connector_id") for name, entry in connectors.items()}
+        )
     if desktop != "kde" and (desktop or os.environ.get("WAYLAND_DISPLAY")):
         from .drm import monitorize_drm_connectors
         from .wlr_output import set_enabled

@@ -117,6 +117,7 @@ class TestCli(unittest.TestCase):
             "name": "Virtual-1",
             "card": "card3",
             "path": "/sys/class/drm/card3-Virtual-1",
+            "connector_id": 41,
         }
 
         with (

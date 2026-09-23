@@ -63,6 +63,7 @@ class TestDrmDiscovery(unittest.TestCase):
         (conn / "device").symlink_to(self.faux_dev)
         (conn / "status").write_text("connected\n")
         (conn / "modes").write_text("2340x1080\n1920x1080\n")
+        (conn / "connector_id").write_text("41\n")
 
         connectors = monitorize_drm_connectors(drm_root=self.drm_root)
         self.assertEqual(len(connectors), 1)
@@ -70,6 +71,7 @@ class TestDrmDiscovery(unittest.TestCase):
         self.assertEqual(connectors["Virtual-1"]["status"], "connected")
         self.assertEqual(connectors["Virtual-1"]["modes"], ["2340x1080", "1920x1080"])
         self.assertEqual(connectors["Virtual-1"]["card"], "card0")
+        self.assertEqual(connectors["Virtual-1"]["connector_id"], 41)
 
     def test_wait_for_new_drm_connector_timeout(self):
         with self.assertRaises(MonitorizeVkmsError) as ctx:

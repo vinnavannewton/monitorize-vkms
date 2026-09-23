@@ -14,7 +14,9 @@ from monitorize_vkms import cli, compositor
 from monitorize_vkms.errors import CompositorError
 
 
-def output_state(name, *, active, primary=False, virtual=False):
+def output_state(
+    name, *, active, connector_id, primary=False, virtual=False
+):
     return {
         "name": name,
         "connected": True,
@@ -24,6 +26,7 @@ def output_state(name, *, active, primary=False, virtual=False):
         "height": 1080 if active else None,
         "x": 1920 if virtual and active else (0 if active else None),
         "y": 0 if active else None,
+        "connector_id": connector_id,
         "modes": (
             [{
                 "name": "2340x1080",
@@ -59,19 +62,28 @@ class CinnamonX11Test(unittest.TestCase):
     def test_xrandr_parser_keeps_connection_geometry_and_rates(self):
         parsed = compositor._parse_xrandr_outputs(
             "eDP-1 connected primary 1920x1080+0+0 (normal left)\n"
+            "\tCONNECTOR_ID: 39\n"
             "   1920x1080     60.01*+  59.93\n"
-            "Virtual-2 connected (normal left)\n"
+            "Virtual-1-2 connected (normal left)\n"
+            "\tCONNECTOR_ID: 41\n"
             "   2340x1080     60.00+\n"
         )
         self.assertTrue(parsed[0]["active"])
         self.assertTrue(parsed[0]["primary"])
         self.assertFalse(parsed[1]["active"])
+        self.assertEqual(parsed[1]["connector_id"], 41)
         self.assertEqual(parsed[1]["modes"][0]["rates"][0]["rate"], 60.0)
 
-    def test_activation_enables_exact_connector_next_to_primary(self):
-        primary = output_state("eDP-1", active=True, primary=True)
-        virtual = output_state("Virtual-2", active=False, virtual=True)
-        active_virtual = output_state("Virtual-2", active=True, virtual=True)
+    def test_activation_maps_drm_connector_id_to_xrandr_output(self):
+        primary = output_state(
+            "Virtual-1", active=True, connector_id=39, primary=True
+        )
+        virtual = output_state(
+            "Virtual-1-2", active=False, connector_id=41, virtual=True
+        )
+        active_virtual = output_state(
+            "Virtual-1-2", active=True, connector_id=41, virtual=True
+        )
         completed = subprocess.CompletedProcess([], 0, "", "")
 
         with (
@@ -84,22 +96,27 @@ class CinnamonX11Test(unittest.TestCase):
             patch.object(compositor.subprocess, "run", return_value=completed) as run,
         ):
             ok, details, message = compositor.xrandr_activate_vkms(
-                [primary, virtual], 2340, 1080, 60.0, "Virtual-2"
+                [primary, virtual],
+                2340,
+                1080,
+                60.0,
+                "Virtual-2",
+                expected_connector_id=41,
             )
 
         self.assertTrue(ok, message)
-        self.assertEqual(details["name"], "Virtual-2")
+        self.assertEqual(details["name"], "Virtual-1-2")
         run.assert_called_once_with(
             [
                 "/usr/bin/xrandr",
                 "--output",
-                "Virtual-2",
+                "Virtual-1-2",
                 "--mode",
                 "2340x1080",
                 "--rate",
                 "60",
                 "--right-of",
-                "eDP-1",
+                "Virtual-1",
             ],
             capture_output=True,
             text=True,
@@ -121,16 +138,22 @@ class CinnamonX11Test(unittest.TestCase):
             ) as activate,
         ):
             result = compositor.activate_in_compositor(
-                "cinnamon", [], 2340, 1080, 60.0, "Virtual-2"
+                "cinnamon", [], 2340, 1080, 60.0, "Virtual-2", 41
             )
 
         self.assertTrue(result[0])
-        activate.assert_called_once_with([], 2340, 1080, 60.0, "Virtual-2")
+        activate.assert_called_once_with([], 2340, 1080, 60.0, "Virtual-2", 41)
 
-    def test_removal_disables_connector_before_kernel_disconnect(self):
-        primary = output_state("eDP-1", active=True, primary=True)
-        virtual = output_state("Virtual-2", active=True, virtual=True)
-        disabled = output_state("Virtual-2", active=False, virtual=True)
+    def test_removal_maps_connector_id_before_kernel_disconnect(self):
+        primary = output_state(
+            "Virtual-1", active=True, connector_id=39, primary=True
+        )
+        virtual = output_state(
+            "Virtual-1-2", active=True, connector_id=41, virtual=True
+        )
+        disabled = output_state(
+            "Virtual-1-2", active=False, connector_id=41, virtual=True
+        )
         completed = subprocess.CompletedProcess([], 0, "", "")
 
         with (
@@ -142,15 +165,36 @@ class CinnamonX11Test(unittest.TestCase):
             ),
             patch.object(compositor.subprocess, "run", return_value=completed) as run,
         ):
-            self.assertTrue(compositor.xrandr_deactivate_vkms({"Virtual-2"}))
+            self.assertTrue(
+                compositor.xrandr_deactivate_vkms({"Virtual-2": 41})
+            )
 
         run.assert_called_once_with(
-            ["/usr/bin/xrandr", "--output", "Virtual-2", "--off"],
+            ["/usr/bin/xrandr", "--output", "Virtual-1-2", "--off"],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
         )
+
+    def test_activation_rejects_ambiguous_connector_id(self):
+        first = output_state(
+            "Virtual-1-2", active=False, connector_id=41, virtual=True
+        )
+        second = output_state(
+            "Virtual-3-2", active=False, connector_id=41, virtual=True
+        )
+
+        with (
+            patch.object(compositor.shutil, "which", return_value="/usr/bin/xrandr"),
+            patch.object(compositor, "xrandr_outputs", return_value=[first, second]),
+        ):
+            ok, _details, message = compositor.xrandr_activate_vkms(
+                [], 2340, 1080, 60.0, "Virtual-2", expected_connector_id=41
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("Multiple XRandR outputs", message)
 
     def test_missing_mutter_service_becomes_compositor_error(self):
         bus = Mock()
