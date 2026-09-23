@@ -63,13 +63,22 @@ def monitorize_drm_connectors(drm_root: Path | None = None) -> dict[str, dict]:
                             modes = [m for m in (entry / "modes").read_text().splitlines() if m.strip()]
                         except OSError:
                             pass
+
+                        connector_id = None
+                        try:
+                            connector_id = int(
+                                (entry / "connector_id").read_text().strip()
+                            )
+                        except (OSError, ValueError):
+                            pass
                             
                         connectors[connector_name] = {
                             "name": connector_name,
                             "path": str(entry),
                             "card": card_name,
                             "status": status,
-                            "modes": modes
+                            "modes": modes,
+                            "connector_id": connector_id,
                         }
                 except OSError:
                     pass

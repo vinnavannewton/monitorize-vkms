@@ -114,6 +114,7 @@ def cmd_create(args: argparse.Namespace) -> int:
             height,
             refresh,
             expected_output_name=drm_conn["name"],
+            expected_connector_id=drm_conn.get("connector_id"),
         )
         if not ok:
             raise CompositorError(comp_msg)

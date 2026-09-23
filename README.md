@@ -100,10 +100,12 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 
 ## Documentation
 
-Cinnamon/X11 uses `xrandr` to enable the exact Monitorize connector at the
-requested mode, place it to the right of the active primary output, and verify
-that Xorg activated it. Removal disables the output through XRandR before the
-kernel connector is disconnected.
+Cinnamon/X11 maps the Monitorize DRM connector to XRandR by its kernel
+`CONNECTOR_ID`, so Xorg-renamed outputs such as DRM `Virtual-2` appearing as
+XRandR `Virtual-1-2` are handled correctly. It enables the mapped output at the
+requested mode, places it to the right of the active primary output, and
+verifies the connector ID, geometry, and refresh rate. Removal uses the same
+mapping to disable the output before the kernel connector is disconnected.
 
 Wayland compositors other than GNOME/KDE require `wlr-randr` with `--json`
 support and the `zwlr_output_manager_v1` protocol. Support is probed through
