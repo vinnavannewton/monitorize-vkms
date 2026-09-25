@@ -79,6 +79,16 @@ def _is_x11_session() -> bool:
     )
 
 
+def _is_wayland_session() -> bool:
+    return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" or bool(
+        os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
+def _muffin_display_config_interface():
+    return _display_config_interface(service="org.cinnamon.Muffin.DisplayConfig")
+
+
 # =========================================================================
 # GNOME Mutter D-Bus Integration
 # =========================================================================
@@ -96,18 +106,18 @@ def _require_dbus():
         ) from exc
 
 
-def _display_config_interface(bus=None, dbus=None):
+def _display_config_interface(bus=None, dbus=None, service="org.gnome.Mutter.DisplayConfig"):
     dbus = dbus or _require_dbus()
     try:
         bus = bus or dbus.SessionBus()
         obj = bus.get_object(
-            "org.gnome.Mutter.DisplayConfig",
-            "/org/gnome/Mutter/DisplayConfig",
+            service,
+            "/" + service.replace(".", "/"),
         )
-        return dbus.Interface(obj, "org.gnome.Mutter.DisplayConfig")
+        return dbus.Interface(obj, service)
     except Exception as exc:
         raise CompositorError(
-            f"GNOME Mutter DisplayConfig is unavailable: {exc}"
+            f"{service} is unavailable: {exc}"
         ) from exc
 
 
@@ -708,16 +718,23 @@ def gnome_activate_vkms(
     width: int,
     height: int,
     refresh: float,
+    *,
+    display_config=None,
+    compositor_name="Mutter",
+    expected_output_name=None,
+    preserve_global_properties=True,
 ) -> tuple[bool, dict[str, Any], str]:
-    """Activate new VKMS connector in GNOME Mutter logical layout."""
+    """Activate new VKMS connector through a Mutter-compatible DisplayConfig."""
     dbus = _require_dbus()
-    display_config = _display_config_interface(dbus=dbus)
+    display_config = display_config or _display_config_interface(dbus=dbus)
 
     connector, state, error = _wait_for_new_vkms_connector(
         before_identities, width, height, display_config
     )
     if not connector:
         return False, {}, error
+    if expected_output_name and connector != expected_output_name:
+        return False, {}, f"{compositor_name} reported unexpected connector {connector}"
 
     for apply_attempt in range(VKMS_APPLY_RETRIES):
         if apply_attempt > 0:
@@ -728,6 +745,20 @@ def gnome_activate_vkms(
         if payload is None:
             return False, {}, error
 
+        # Muffin can put the hotplugged connector in the layout before this
+        # call. Keep that valid layout rather than applying it a second time.
+        current_mode = _active_output_modes(state, display_config).get(connector)
+        if (
+            compositor_name == "Muffin"
+            and _is_monitor_logically_active(state, connector)
+            and current_mode
+            and current_mode["width"] == details["width"]
+            and current_mode["height"] == details["height"]
+            and abs(current_mode["refresh_rate"] - details["refresh_rate"])
+            <= REFRESH_RATE_TOLERANCE_HZ
+        ):
+            return True, details, f"Muffin activated {connector}"
+
         try:
             display_config.ApplyMonitorsConfig(
                 _typed(dbus, "UInt32", int(state[0])),
@@ -735,7 +766,8 @@ def gnome_activate_vkms(
                 payload,
                 _variant_dict(
                     dbus,
-                    _allowed_properties(state[3], GLOBAL_CONFIG_PROPERTY_KEYS),
+                    _allowed_properties(state[3], GLOBAL_CONFIG_PROPERTY_KEYS)
+                    if preserve_global_properties else {},
                 ),
             )
         except Exception as exc:
@@ -746,7 +778,7 @@ def gnome_activate_vkms(
             return (
                 False,
                 {},
-                f"Could not apply GNOME VKMS layout for {connector}: {exc}",
+                f"Could not apply {compositor_name} VKMS layout for {connector}: {exc}",
             )
 
         for _attempt in range(VKMS_ACTIVATION_ATTEMPTS):
@@ -763,7 +795,7 @@ def gnome_activate_vkms(
                 return (
                     True,
                     details,
-                    f"Mutter activated {connector} at {details['width']}x"
+                    f"{compositor_name} activated {connector} at {details['width']}x"
                     f"{details['height']}@{details['refresh_rate']:g}Hz",
                 )
             time.sleep(WAIT_DELAY)
@@ -771,7 +803,7 @@ def gnome_activate_vkms(
         return (
             False,
             {},
-            f"Mutter discovered {connector} but did not activate it within "
+            f"{compositor_name} discovered {connector} but did not activate it within "
             f"{VKMS_ACTIVATION_ATTEMPTS * WAIT_DELAY:g}s",
         )
 
@@ -786,19 +818,30 @@ def gnome_deactivate_vkms(
     before_identities: dict[str, tuple[str, ...]],
     attempts=VKMS_ACTIVATION_ATTEMPTS,
     delay=WAIT_DELAY,
+    *,
+    display_config=None,
+    target_connectors=None,
+    preserve_global_properties=True,
 ) -> bool:
-    """Remove newly added VKMS monitors from Mutter layout."""
+    """Remove VKMS monitors from a Mutter-compatible logical layout."""
     try:
         dbus = _require_dbus()
-        display_config = _display_config_interface(dbus=dbus)
+        display_config = display_config or _display_config_interface(dbus=dbus)
         for _attempt in range(attempts):
             state = _mutter_state(display_config)
+            candidates = (
+                list(target_connectors)
+                if target_connectors is not None
+                else _new_vkms_connectors(state, before_identities)
+            )
             targets = [
                 c
-                for c in _new_vkms_connectors(state, before_identities)
+                for c in candidates
                 if _is_monitor_logically_active(state, c)
             ]
             if not targets:
+                if target_connectors is not None:
+                    return True
                 time.sleep(delay)
                 continue
             payload, error = _build_layout_without_connectors(
@@ -816,7 +859,7 @@ def gnome_deactivate_vkms(
                         dbus,
                         _allowed_properties(
                             state[3], GLOBAL_CONFIG_PROPERTY_KEYS
-                        ),
+                        ) if preserve_global_properties else {},
                     ),
                 )
             except Exception as exc:
@@ -1279,6 +1322,9 @@ def get_compositor_snapshot() -> tuple[str | None, Any]:
         return "kde", outs
     elif desktop == "cinnamon" and _is_x11_session():
         return "cinnamon", xrandr_outputs()
+    elif desktop == "cinnamon" and _is_wayland_session():
+        state = _mutter_state(_muffin_display_config_interface())
+        return "cinnamon", physical_monitor_identities(state)
     return desktop, None
 
 
@@ -1312,6 +1358,17 @@ def activate_in_compositor(
             refresh,
             expected_output_name,
             expected_connector_id,
+        )
+    elif desktop == "cinnamon" and _is_wayland_session():
+        return gnome_activate_vkms(
+            before_state or {},
+            width,
+            height,
+            refresh,
+            display_config=_muffin_display_config_interface(),
+            compositor_name="Muffin",
+            expected_output_name=expected_output_name,
+            preserve_global_properties=False,
         )
     elif desktop is None and not os.environ.get("WAYLAND_DISPLAY"):
         return (
@@ -1354,6 +1411,22 @@ def deactivate_in_compositor(desktop: str | None, before_state: Any) -> bool:
         return xrandr_deactivate_vkms(
             {name: entry.get("connector_id") for name, entry in connectors.items()}
         )
+    if desktop == "cinnamon" and _is_wayland_session():
+        from .drm import monitorize_drm_connectors
+
+        connectors = monitorize_drm_connectors()
+        targets = [
+            name for name, entry in connectors.items()
+            if entry["status"] != "disconnected"
+        ]
+        if not gnome_deactivate_vkms(
+            before_state or {},
+            display_config=_muffin_display_config_interface(),
+            target_connectors=targets,
+            preserve_global_properties=False,
+        ):
+            raise CompositorError("Muffin did not deactivate the Monitorize display")
+        return True
     if desktop != "kde" and (desktop or os.environ.get("WAYLAND_DISPLAY")):
         from .drm import monitorize_drm_connectors
         from .wlr_output import set_enabled
