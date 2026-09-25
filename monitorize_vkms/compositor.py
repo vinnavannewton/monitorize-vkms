@@ -46,6 +46,8 @@ def detect_compositor() -> str | None:
         if value
     ).lower()
 
+    if "cosmic" in current_desktop:
+        return "cosmic"
     if "cinnamon" in current_desktop:
         return "cinnamon"
     if "gnome" in current_desktop:
@@ -1370,6 +1372,29 @@ def activate_in_compositor(
             expected_output_name=expected_output_name,
             preserve_global_properties=False,
         )
+    elif desktop == "cosmic":
+        from .cosmic_output import set_enabled
+        from .drm import monitorize_drm_connectors
+
+        if not _is_wayland_session():
+            raise CompositorError("COSMIC output management requires a Wayland session.")
+        connector = monitorize_drm_connectors().get(expected_output_name)
+        if (
+            not expected_output_name
+            or not expected_output_name.startswith("Virtual-")
+            or connector is None
+            or connector["status"] != "connected"
+            or (expected_connector_id is not None
+                and connector.get("connector_id") != expected_connector_id)
+        ):
+            raise CompositorError("Cannot identify the Monitorize DRM output for COSMIC activation.")
+        set_enabled(expected_output_name, True)
+        return (
+            True,
+            {"name": expected_output_name, "width": width, "height": height,
+             "refresh_rate": refresh},
+            f"COSMIC confirmed {expected_output_name} is enabled",
+        )
     elif desktop is None and not os.environ.get("WAYLAND_DISPLAY"):
         return (
             True,
@@ -1426,6 +1451,22 @@ def deactivate_in_compositor(desktop: str | None, before_state: Any) -> bool:
             preserve_global_properties=False,
         ):
             raise CompositorError("Muffin did not deactivate the Monitorize display")
+        return True
+    if desktop == "cosmic":
+        from .cosmic_output import set_enabled
+        from .drm import monitorize_drm_connectors
+
+        if not _is_wayland_session():
+            raise CompositorError("COSMIC output management requires a Wayland session.")
+        connectors = monitorize_drm_connectors()
+        targets = [name for name, entry in connectors.items()
+                   if entry["status"] != "disconnected"]
+        if len(targets) > 1:
+            raise CompositorError("Multiple Monitorize connectors found; refusing ambiguous removal.")
+        for name in targets:
+            if not name.startswith("Virtual-"):
+                raise CompositorError("Unexpected Monitorize connector identity.")
+            set_enabled(name, False)
         return True
     if desktop != "kde" and (desktop or os.environ.get("WAYLAND_DISPLAY")):
         from .drm import monitorize_drm_connectors
