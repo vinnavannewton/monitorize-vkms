@@ -107,7 +107,12 @@ requested mode, places it to the right of the active primary output, and
 verifies the connector ID, geometry, and refresh rate. Removal uses the same
 mapping to disable the output before the kernel connector is disconnected.
 
-Wayland compositors other than GNOME/KDE require `wlr-randr` with `--json`
+COSMIC Wayland uses its native `cosmic-randr` client. It reads named heads from
+`cosmic-randr list --kdl`, waits for the configuration result when enabling or
+disabling the exact Monitorize output, and confirms the new state with a fresh
+query. This avoids requiring a distro version of `wlr-randr` with `--json`.
+
+Other Wayland compositors besides GNOME/KDE/Cinnamon/COSMIC require `wlr-randr` with `--json`
 support and the `zwlr_output_manager_v1` protocol. Support is probed through
 the actual protocol connection, including for unrecognized Wayland desktops.
 Removal disables the exact Monitorize output and confirms its disabled state
