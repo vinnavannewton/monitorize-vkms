@@ -7,3 +7,15 @@
 /src/vkms/.*.cmd
 /src/vkms/Module.symvers
 /src/vkms/modules.order
+
+# Python bytecode and test/type-checker caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Python packaging output
+/build/
+/dist/
+/*.egg-info/
