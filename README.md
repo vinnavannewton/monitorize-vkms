@@ -8,6 +8,18 @@ It can be used as a **standalone CLI tool** or as the backend for [Monitorize](h
 
 ---
 
+## Supported desktops
+
+| Desktop Environments | Compatibility |
+| --- | :---: |
+| KDE Plasma | ✅ |
+| GNOME | ✅ |
+| Hyprland | ❌ |
+| Niri | ✅ |
+| Cinnamon X11 | ✅ |
+
+---
+
 ## Standalone CLI Usage
 
 After installing and rebooting once, you can manage virtual displays directly from your terminal:
