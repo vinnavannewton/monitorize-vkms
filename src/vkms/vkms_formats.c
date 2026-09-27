@@ -301,7 +301,6 @@ struct pixel_argb_u16 argb_u16_from_yuv161616(const struct conversion_matrix *ma
 
 	return argb_u16_from_u16161616(0xffff, r, g, b);
 }
-EXPORT_SYMBOL_IF_KUNIT(argb_u16_from_yuv161616);
 
 /**
  * READ_LINE() - Generic generator for a read_line function which can be used for format with one
@@ -933,7 +932,6 @@ void get_conversion_matrix_to_argb_u16(u32 format,
 		break;
 	}
 }
-EXPORT_SYMBOL(get_conversion_matrix_to_argb_u16);
 
 /**
  * get_pixel_write_function() - Retrieve the correct write_pixel function for a specific format.

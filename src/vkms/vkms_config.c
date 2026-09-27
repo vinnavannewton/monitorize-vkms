@@ -70,7 +70,6 @@ struct vkms_config *vkms_config_create(const char *dev_name)
 
 	return config;
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_create);
 
 struct vkms_config *vkms_config_default_create(bool enable_cursor,
 					       bool enable_writeback,
@@ -152,7 +151,6 @@ err_alloc:
 	vkms_config_destroy(config);
 	return ERR_PTR(-ENOMEM);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_default_create);
 
 void vkms_config_destroy(struct vkms_config *config)
 {
@@ -176,7 +174,6 @@ void vkms_config_destroy(struct vkms_config *config)
 	kfree_const(config->dev_name);
 	kfree(config);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_destroy);
 
 static bool valid_plane_number(const struct vkms_config *config)
 {
@@ -217,7 +214,6 @@ bool vkms_config_valid_plane_rotation(const struct vkms_config *config,
 
 	return true;
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_valid_plane_rotation);
 
 VISIBLE_IF_KUNIT
 bool vkms_config_valid_plane_color_encoding(const struct vkms_config *config,
@@ -236,7 +232,6 @@ bool vkms_config_valid_plane_color_encoding(const struct vkms_config *config,
 
 	return true;
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_valid_plane_color_encoding);
 
 VISIBLE_IF_KUNIT
 bool vkms_config_valid_plane_color_range(const struct vkms_config *config,
@@ -255,7 +250,6 @@ bool vkms_config_valid_plane_color_range(const struct vkms_config *config,
 
 	return true;
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_valid_plane_color_range);
 
 VISIBLE_IF_KUNIT
 bool vkms_config_valid_plane_zpos(const struct vkms_config *config,
@@ -544,7 +538,6 @@ bool vkms_config_is_valid(const struct vkms_config *config)
 
 	return true;
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_is_valid);
 
 static void show_bitfield(struct seq_file *m, uint32_t value, const char *callback(unsigned int))
 {
@@ -713,7 +706,6 @@ cleanup_plane_cfg:
 fail:
 	return ERR_PTR(ret);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_create_plane);
 
 void vkms_config_destroy_plane(struct vkms_config_plane *plane_cfg)
 {
@@ -723,7 +715,6 @@ void vkms_config_destroy_plane(struct vkms_config_plane *plane_cfg)
 	kfree(plane_cfg->name);
 	kfree(plane_cfg);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_destroy_plane);
 
 int __must_check vkms_config_plane_attach_crtc(struct vkms_config_plane *plane_cfg,
 					       struct vkms_config_crtc *crtc_cfg)
@@ -743,7 +734,6 @@ int __must_check vkms_config_plane_attach_crtc(struct vkms_config_plane *plane_c
 	return xa_alloc(&plane_cfg->possible_crtcs, &crtc_idx, crtc_cfg,
 			xa_limit_32b, GFP_KERNEL);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_plane_attach_crtc);
 
 void vkms_config_plane_detach_crtc(struct vkms_config_plane *plane_cfg,
 				   struct vkms_config_crtc *crtc_cfg)
@@ -756,7 +746,6 @@ void vkms_config_plane_detach_crtc(struct vkms_config_plane *plane_cfg,
 			xa_erase(&plane_cfg->possible_crtcs, idx);
 	}
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_plane_detach_crtc);
 
 struct vkms_config_crtc *vkms_config_create_crtc(struct vkms_config *config)
 {
@@ -773,7 +762,6 @@ struct vkms_config_crtc *vkms_config_create_crtc(struct vkms_config *config)
 
 	return crtc_cfg;
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_create_crtc);
 
 void vkms_config_destroy_crtc(struct vkms_config *config,
 			      struct vkms_config_crtc *crtc_cfg)
@@ -790,7 +778,6 @@ void vkms_config_destroy_crtc(struct vkms_config *config,
 	list_del(&crtc_cfg->link);
 	kfree(crtc_cfg);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_destroy_crtc);
 
 /**
  * vkms_config_crtc_get_plane() - Return the first attached plane to a CRTC with
@@ -902,14 +889,12 @@ struct vkms_config_plane *vkms_config_crtc_primary_plane(const struct vkms_confi
 {
 	return vkms_config_crtc_get_plane(config, crtc_cfg, DRM_PLANE_TYPE_PRIMARY);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_crtc_primary_plane);
 
 struct vkms_config_plane *vkms_config_crtc_cursor_plane(const struct vkms_config *config,
 							struct vkms_config_crtc *crtc_cfg)
 {
 	return vkms_config_crtc_get_plane(config, crtc_cfg, DRM_PLANE_TYPE_CURSOR);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_crtc_cursor_plane);
 
 struct vkms_config_encoder *vkms_config_create_encoder(struct vkms_config *config)
 {
@@ -926,7 +911,6 @@ struct vkms_config_encoder *vkms_config_create_encoder(struct vkms_config *confi
 
 	return encoder_cfg;
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_create_encoder);
 
 void vkms_config_destroy_encoder(struct vkms_config *config,
 				 struct vkms_config_encoder *encoder_cfg)
@@ -940,7 +924,6 @@ void vkms_config_destroy_encoder(struct vkms_config *config,
 	list_del(&encoder_cfg->link);
 	kfree(encoder_cfg);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_destroy_encoder);
 
 int __must_check vkms_config_encoder_attach_crtc(struct vkms_config_encoder *encoder_cfg,
 						 struct vkms_config_crtc *crtc_cfg)
@@ -960,7 +943,6 @@ int __must_check vkms_config_encoder_attach_crtc(struct vkms_config_encoder *enc
 	return xa_alloc(&encoder_cfg->possible_crtcs, &crtc_idx, crtc_cfg,
 			xa_limit_32b, GFP_KERNEL);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_encoder_attach_crtc);
 
 void vkms_config_encoder_detach_crtc(struct vkms_config_encoder *encoder_cfg,
 				     struct vkms_config_crtc *crtc_cfg)
@@ -973,7 +955,6 @@ void vkms_config_encoder_detach_crtc(struct vkms_config_encoder *encoder_cfg,
 			xa_erase(&encoder_cfg->possible_crtcs, idx);
 	}
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_encoder_detach_crtc);
 
 struct vkms_config_connector *vkms_config_create_connector(struct vkms_config *config)
 {
@@ -995,7 +976,6 @@ struct vkms_config_connector *vkms_config_create_connector(struct vkms_config *c
 
 	return connector_cfg;
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_create_connector);
 
 void vkms_config_destroy_connector(struct vkms_config *config,
 				   struct vkms_config_connector *connector_cfg)
@@ -1011,7 +991,6 @@ void vkms_config_destroy_connector(struct vkms_config *config,
 	list_del(&connector_cfg->link);
 	kfree(connector_cfg);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_destroy_connector);
 
 int __must_check vkms_config_connector_attach_encoder(struct vkms_config_connector *connector_cfg,
 						      struct vkms_config_encoder *encoder_cfg)
@@ -1032,7 +1011,6 @@ int __must_check vkms_config_connector_attach_encoder(struct vkms_config_connect
 	return xa_alloc(&connector_cfg->possible_encoders, &encoder_idx,
 			encoder_cfg, xa_limit_32b, GFP_KERNEL);
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_connector_attach_encoder);
 
 void vkms_config_connector_detach_encoder(struct vkms_config_connector *connector_cfg,
 					  struct vkms_config_encoder *encoder_cfg)
@@ -1046,4 +1024,3 @@ void vkms_config_connector_detach_encoder(struct vkms_config_connector *connecto
 			xa_erase(&connector_cfg->possible_encoders, idx);
 	}
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_config_connector_detach_encoder);

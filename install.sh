@@ -38,6 +38,7 @@ SOURCE_STAGED=0
 INSTALL_COMMITTED=0
 BOOTSTRAP_INSTALLED=0
 CLI_INSTALLED=0
+STOCK_VKMS_BEFORE=""
 
 log() { printf '[Monitorize VKMS] %s\n' "$*"; }
 warn() { printf '[Monitorize VKMS] Warning: %s\n' "$*" >&2; }
@@ -105,7 +106,7 @@ print_dependency_help() {
 check_prerequisites() {
 	local missing=()
 	local command
-	for command in dkms make gcc install modinfo depmod find sort flock; do
+	for command in dkms make gcc install modinfo depmod find sort flock nm; do
 		command -v "$command" >/dev/null || missing+=("$command")
 	done
 	[[ -f "${KERNEL_BUILD_DIR}/Makefile" ]] || missing+=("${KERNEL_BUILD_DIR}/Makefile")
@@ -121,18 +122,6 @@ check_prerequisites() {
 acquire_global_lock() {
 	exec 9>"$LOCK_PATH"
 	flock -n 9 || die "Another Monitorize VKMS installation or display operation is running"
-}
-
-check_replaceable_module() {
-	local config
-	for config in "/boot/config-${KERNEL}" "${KERNEL_BUILD_DIR}/.config"; do
-		[[ -r "$config" ]] || continue
-		if grep -Fqx 'CONFIG_DRM_VKMS=y' "$config"; then
-			die "${KERNEL} has VKMS built into the kernel; an external VKMS implementation cannot safely coexist"
-		fi
-		return
-	done
-	die "Kernel configuration is unavailable; built-in VKMS cannot be ruled out safely"
 }
 
 check_secure_boot() {
@@ -285,9 +274,15 @@ remove_legacy_versions() {
 	stock="$(modinfo -k "$KERNEL" -n vkms 2>/dev/null || true)"
 	case "$stock" in
 		"/lib/modules/${KERNEL}/kernel/"*) ;;
-		"") die "Distro vkms did not return after removing the legacy replacement" ;;
+		"(builtin)") log "Kernel ${KERNEL} provides built-in VKMS" ;;
+		"") log "Kernel ${KERNEL} has no stock VKMS implementation" ;;
 		*) die "Legacy external vkms still resolves after migration: ${stock}" ;;
 	esac
+}
+
+record_stock_module() {
+	# Capture the packaged module after retiring any old release that replaced it.
+	STOCK_VKMS_BEFORE="$(modinfo -k "$KERNEL" -n vkms 2>/dev/null || true)"
 }
 
 secure_boot_key_is_enrolled() {
@@ -317,13 +312,16 @@ verify_installation() {
 	esac
 	verify_module_file "$preferred"
 
-	# The safety invariant: installing Monitorize must not relocate or outrank
-	# the distro vkms module under its original name.
+	# The safety invariant: installing Monitorize must not replace the distro
+	# vkms module under its original name.
 	local stock
 	stock="$(modinfo -k "$KERNEL" -n vkms 2>/dev/null || true)"
+	[[ "$stock" == "$STOCK_VKMS_BEFORE" ]] ||
+		die "Stock VKMS changed during installation: ${STOCK_VKMS_BEFORE:-absent} -> ${stock:-absent}"
 	case "$stock" in
 		"/lib/modules/${KERNEL}/kernel/"*) log "Distro VKMS remains untouched: ${stock}" ;;
-		"") die "The distro vkms module stopped resolving after installation" ;;
+		"(builtin)") log "Built-in VKMS remains untouched" ;;
+		"") log "No stock VKMS implementation is installed for ${KERNEL}" ;;
 		*) die "A legacy external module still overrides distro vkms: ${stock}" ;;
 	esac
 
@@ -435,11 +433,11 @@ main() {
 	detect_distro
 	check_prerequisites
 	acquire_global_lock
-	check_replaceable_module
 	check_secure_boot
 	trap 'rollback_failed_install $?' EXIT
 	prebuild_source
 	remove_legacy_versions
+	record_stock_module
 
 	if current_version_installed && source_matches_installed; then
 		log "${PACKAGE_NAME}/${MODULE_PACKAGE_VERSION} is already installed and matches source for ${KERNEL}; verifying it"
@@ -458,7 +456,7 @@ main() {
 	printf '\n==========================================\n'
 	printf 'Monitorize VKMS installed safely\n'
 	printf '==========================================\n\n'
-	printf 'The distro vkms.ko was not replaced. Monitorize VKMS installed. Reboot required.\n'
+	printf 'Stock VKMS state was preserved. Monitorize VKMS installed. Reboot required.\n'
 	printf 'At the next boot the persistent DRM card is created before the display manager.\n\n'
 	printf 'Standalone CLI commands:\n'
 	printf '  monitorize-vkms doctor\n'

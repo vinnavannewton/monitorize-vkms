@@ -23,6 +23,14 @@ monitorize_vkms-y := \
 
 all: $(FEATURE_HEADER)
 	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
+	@symbols="$$(nm -a monitorize_vkms.ko)" || { \
+		echo "could not inspect monitorize_vkms.ko exports" >&2; \
+		exit 1; \
+	}; \
+	if printf '%s\n' "$$symbols" | grep -Eq '__ksymtab'; then \
+		echo "monitorize_vkms.ko must not export kernel symbols" >&2; \
+		exit 1; \
+	fi
 
 $(FEATURE_HEADER): FORCE $(ATOMIC_API_PROBE)
 	$(SHELL) $(ATOMIC_API_PROBE) --kdir "$(KDIR)" --output "$@"

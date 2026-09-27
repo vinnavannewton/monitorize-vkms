@@ -24,17 +24,27 @@ Important functionality carried for Monitorize:
 
 Policy:
 These sources should remain as close as possible to upstream VKMS.
-Monitorize-specific behavior belongs in userspace or in a small explicitly
-separated out-of-tree compatibility layer.
+Monitorize-specific behavior belongs in userspace or in a small, explicit
+out-of-tree adaptation. The intentional coexistence adaptations are:
+
+- Register configfs as `monitorize-vkms`, leaving upstream `vkms` available to
+  the in-tree driver.
+- Use `monitorize_vkms` as the DRM driver identity and `monitorize-vkms` as the
+  default faux device name.
+- Remove all kernel symbol exports from this standalone module. Its consumers
+  are linked into the same module, and exports would collide with stock VKMS.
+- Keep kernel API compatibility in `vkms_oot_compat.h` and generated feature
+  probes.
 
 Generic DRM patches from the series are **not** copied into this repository.
 
 ## Out-of-tree compatibility
 
-Copied VKMS sources remain upstream-derived. `vkms_oot_compat.h` is a local
-out-of-tree compatibility layer, included only by `vkms_config.c`. It replaces
-diagnostic DRM naming helpers unavailable to an external module; no functional
-DRM behavior is replaced. Generic DRM patch 6 is intentionally not required
+Copied VKMS sources remain upstream-derived, with the isolated naming and
+symbol-visibility changes above. `vkms_oot_compat.h` is a local out-of-tree
+compatibility layer, included only by `vkms_config.c`. It replaces diagnostic
+DRM naming helpers unavailable to an external module; no functional DRM
+behavior is replaced. Generic DRM patch 6 is intentionally not required
 because Monitorize uses the zero-degree default rotation.
 
 The external-module build probes the target kernel for the optional CRTC

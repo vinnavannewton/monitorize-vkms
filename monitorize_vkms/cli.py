@@ -13,6 +13,7 @@ import sys
 from typing import Any
 
 from monitorize_vkms import __version__
+from monitorize_vkms.configfs import CONFIGFS_INSTANCE
 from monitorize_vkms.compositor import (
     activate_in_compositor,
     deactivate_in_compositor,
@@ -275,7 +276,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     module_loaded = Path("/sys/module/monitorize_vkms").is_dir()
-    configfs_dev = Path("/sys/kernel/config/vkms/monitorize")
+    configfs_dev = CONFIGFS_INSTANCE
     device_enabled = (
         (configfs_dev / "enabled").read_text().strip() == "1"
         if (configfs_dev / "enabled").is_file()
@@ -365,16 +366,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "Run: sudo ./install.sh and reboot, or run: sudo modprobe monitorize_vkms create_default_dev=0",
     )
 
-    # 2. Stock VKMS conflict
-    stock_path = Path("/sys/module/vkms")
-    check(
-        "Stock 'vkms' module not conflicting",
-        not stock_path.is_dir(),
-        "Stock vkms is not loaded" if not stock_path.is_dir() else "Stock vkms is loaded alongside monitorize_vkms!",
-        "Stock vkms interferes with monitorize_vkms. Unload it: sudo rmmod vkms",
-    )
-
-    # 3. ConfigFS mounted
+    # 2. ConfigFS mounted
     configfs = Path("/sys/kernel/config")
     check(
         "ConfigFS filesystem mounted",
@@ -383,8 +375,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "Mount configfs: sudo mount -t configfs none /sys/kernel/config",
     )
 
-    # 4. Topology bootstrapped
-    instance = Path("/sys/kernel/config/vkms/monitorize")
+    # 3. Topology bootstrapped
+    instance = CONFIGFS_INSTANCE
     bootstrap_ok = (
         instance.is_dir()
         and (instance / "enabled").is_file()

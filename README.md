@@ -93,7 +93,9 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 
 - **Isolated Driver**: Module name is `monitorize_vkms`. Distro `vkms` remains untouched at its packaged path.
 - **Fail-Closed Secure Boot**: Refuses unsigned modules if Secure Boot is enabled unless a valid DKMS MOK key is enrolled.
-- **No Built-in Conflict**: Rejects kernels built with `CONFIG_DRM_VKMS=y`.
+- **Stock VKMS Coexistence**: Uses a separate `monitorize-vkms` configfs
+  namespace and exports no VKMS symbols, so the distro implementation may be
+  built-in or loaded at the same time.
 - **Atomic Rollback**: Any failure during installation immediately cleans up all staged files and DKMS registrations.
 
 ---

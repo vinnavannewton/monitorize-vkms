@@ -6,7 +6,7 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 
 readonly MODULE='monitorize_vkms'
-readonly ROOT='/sys/kernel/config/vkms'
+readonly ROOT='/sys/kernel/config/monitorize-vkms'
 readonly DEVICE="${ROOT}/monitorize"
 readonly PLANE="${DEVICE}/planes/plane0"
 readonly CRTC="${DEVICE}/crtcs/crtc0"

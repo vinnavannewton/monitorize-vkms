@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -10,14 +11,35 @@ from monitorize_vkms.helper import (
     CONNECTOR_STATUS_CONNECTED,
     CONNECTOR_STATUS_DISCONNECTED,
     VkmsHelperError,
+    _configfs_root,
     _disconnect_connector,
     _enable_connector,
 )
 
 
+class TestConfigfsOwnership(unittest.TestCase):
+    def test_uses_monitorize_namespace_when_stock_namespace_also_exists(self):
+        with TemporaryDirectory() as directory:
+            mount = Path(directory)
+            (mount / "vkms").mkdir()
+            (mount / "monitorize-vkms").mkdir()
+            logs: list[str] = []
+            with patch("monitorize_vkms.helper._configfs_mounts", return_value=[mount]):
+                self.assertEqual(_configfs_root(logs), mount)
+            self.assertEqual(logs, [f"Using configfs mountpoint {mount}"])
+
+    def test_rejects_stock_namespace_without_monitorize_namespace(self):
+        with TemporaryDirectory() as directory:
+            mount = Path(directory)
+            (mount / "vkms").mkdir()
+            with patch("monitorize_vkms.helper._configfs_mounts", return_value=[mount]):
+                with self.assertRaisesRegex(VkmsHelperError, "Monitorize VKMS configfs is not registered"):
+                    _configfs_root([])
+
+
 class TestPersistentConnectorHelper(unittest.TestCase):
     def setUp(self):
-        self.connector = Path("/config/vkms/monitorize/connectors/connector0")
+        self.connector = Path("/config/monitorize-vkms/monitorize/connectors/connector0")
         self.values = {
             "enabled": "1",
             "status": CONNECTOR_STATUS_DISCONNECTED,
