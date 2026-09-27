@@ -33,11 +33,11 @@ static bool is_configfs_registered;
  * struct vkms_configfs_device - Configfs representation of a VKMS device
  *
  * @group: Top level configuration group that represents a VKMS device.
- * Initialized when a new directory is created under "/config/vkms/"
- * @planes_group: Default subgroup of @group at "/config/vkms/planes"
- * @crtcs_group: Default subgroup of @group at "/config/vkms/crtcs"
- * @encoders_group: Default subgroup of @group at "/config/vkms/encoders"
- * @connectors_group: Default subgroup of @group at "/config/vkms/connectors"
+ * Initialized when a new directory is created under "/config/monitorize-vkms/"
+ * @planes_group: Default subgroup of @group at "/config/monitorize-vkms/planes"
+ * @crtcs_group: Default subgroup of @group at "/config/monitorize-vkms/crtcs"
+ * @encoders_group: Default subgroup of @group at "/config/monitorize-vkms/encoders"
+ * @connectors_group: Default subgroup of @group at "/config/monitorize-vkms/connectors"
  * @lock: Lock used to project concurrent access to the configuration attributes
  * @config: Protected by @lock. Configuration of the VKMS device
  * @enabled: Protected by @lock. The device is created or destroyed when this
@@ -59,7 +59,7 @@ struct vkms_configfs_device {
  * struct vkms_configfs_plane - Configfs representation of a plane
  *
  * @group: Top level configuration group that represents a plane.
- * Initialized when a new directory is created under "/config/vkms/planes"
+ * Initialized when a new directory is created under "/config/monitorize-vkms/planes"
  * @possible_crtcs_group: Default subgroup of @group at "plane/possible_crtcs"
  * @dev: The vkms_configfs_device this plane belongs to
  * @config: Configuration of the VKMS plane
@@ -75,7 +75,7 @@ struct vkms_configfs_plane {
  * struct vkms_configfs_crtc - Configfs representation of a CRTC
  *
  * @group: Top level configuration group that represents a CRTC.
- * Initialized when a new directory is created under "/config/vkms/crtcs"
+ * Initialized when a new directory is created under "/config/monitorize-vkms/crtcs"
  * @dev: The vkms_configfs_device this CRTC belongs to
  * @config: Configuration of the VKMS CRTC
  */
@@ -89,7 +89,7 @@ struct vkms_configfs_crtc {
  * struct vkms_configfs_encoder - Configfs representation of a encoder
  *
  * @group: Top level configuration group that represents a encoder.
- * Initialized when a new directory is created under "/config/vkms/encoders"
+ * Initialized when a new directory is created under "/config/monitorize-vkms/encoders"
  * @possible_crtcs_group: Default subgroup of @group at "encoder/possible_crtcs"
  * @dev: The vkms_configfs_device this encoder belongs to
  * @config: Configuration of the VKMS encoder
@@ -105,7 +105,7 @@ struct vkms_configfs_encoder {
  * struct vkms_configfs_connector - Configfs representation of a connector
  *
  * @group: Top level configuration group that represents a connector.
- * Initialized when a new directory is created under "/config/vkms/connectors"
+ * Initialized when a new directory is created under "/config/monitorize-vkms/connectors"
  * @possible_encoders_group: Default subgroup of @group at
  * "connector/possible_encoders"
  * @dev: The vkms_configfs_device this connector belongs to
@@ -652,7 +652,6 @@ int vkms_configfs_parse_next_format(const char *page, const char *page_end, char
 
 	return end - *out;
 }
-EXPORT_SYMBOL_IF_KUNIT(vkms_configfs_parse_next_format);
 
 static ssize_t plane_supported_formats_store(struct config_item *item,
 					     const char *page, size_t count)
@@ -1796,7 +1795,7 @@ static const struct config_item_type device_group_type = {
 static struct configfs_subsystem vkms_subsys = {
 	.su_group = {
 		.cg_item = {
-			.ci_name = "vkms",
+			.ci_name = "monitorize-vkms",
 			.ci_type = &device_group_type,
 		},
 	},

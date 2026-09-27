@@ -20,24 +20,28 @@ target DRM API before compiling. The result is
 ## Temporary module test
 
 The custom module is named `monitorize_vkms`, while the distro module remains
-`vkms`. Their configfs registrations still conflict, so only one can be loaded
-at a time. Do this only from a TTY after logging out of the desktop and
-confirming that no process has the VKMS DRM card open.
+`vkms`. They use independent configfs namespaces and are designed to load
+together; verify both load orders in a disposable VM before claiming runtime
+coexistence.
+For module lifecycle checks, use a disposable VM or a TTY after logging out of
+the desktop and confirming that no process has the target DRM card open. When
+stock VKMS is a module and is not loaded, load it first with
+`sudo modprobe vkms create_default_dev=0` to check coexistence.
 
 From `src/vkms`:
 
 ```sh
-sudo modprobe -r vkms
 sudo insmod ./monitorize_vkms.ko create_default_dev=0
 ```
 
-`create_default_dev=0` registers VKMS configfs without creating the legacy
-default virtual display. Verify the load with:
+`create_default_dev=0` registers Monitorize's configfs namespace without
+creating a default virtual display. Verify both loaded implementations with:
 
 ```sh
 lsmod | grep '^monitorize_vkms'
 cat /sys/module/monitorize_vkms/parameters/create_default_dev
-ls -la /sys/kernel/config/vkms
+ls -la /sys/kernel/config/monitorize-vkms
+if [ -d /sys/kernel/config/vkms ]; then ls -la /sys/kernel/config/vkms; fi
 ```
 
 The expected parameter value is `N`.
@@ -51,7 +55,7 @@ topology manually just to test this feature.
 To inspect existing connectors without changing state:
 
 ```sh
-find /sys/kernel/config/vkms -type f \( -name edid -o -name edid_enabled \) -print
+find /sys/kernel/config/monitorize-vkms -type f \( -name edid -o -name edid_enabled \) -print
 ```
 
 ## Restore the distro module
@@ -71,7 +75,7 @@ custom module has a different filename and does not replace that distro file.
 ## Safety
 
 - Do not use `rmmod -f` or `modprobe -r --force`.
-- Do not use recursive deletion on `/sys/kernel/config/vkms`.
+- Do not use recursive deletion on `/sys/kernel/config/monitorize-vkms`.
 - Do not overwrite or delete the distro `vkms.ko`.
 - Stop and investigate if normal module removal fails.
 

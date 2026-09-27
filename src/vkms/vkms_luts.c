@@ -276,7 +276,6 @@ const struct vkms_color_lut linear_eotf = {
 	.lut_length = LUT_SIZE,
 	.channel_value2index_ratio = 0xff00ffll
 };
-EXPORT_SYMBOL(linear_eotf);
 
 static struct drm_color_lut srgb_array[LUT_SIZE] = {
 	{ 0x0, 0x0, 0x0, 0 },
@@ -542,7 +541,6 @@ const struct vkms_color_lut srgb_eotf = {
 	.lut_length = LUT_SIZE,
 	.channel_value2index_ratio = 0xff00ffll
 };
-EXPORT_SYMBOL(srgb_eotf);
 
 static struct drm_color_lut srgb_inv_array[LUT_SIZE] = {
 	{ 0x0, 0x0, 0x0, 0 },
@@ -808,4 +806,3 @@ const struct vkms_color_lut srgb_inv_eotf = {
 	.lut_length = LUT_SIZE,
 	.channel_value2index_ratio = 0xff00ffll
 };
-EXPORT_SYMBOL(srgb_inv_eotf);

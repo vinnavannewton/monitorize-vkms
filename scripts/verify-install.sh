@@ -33,24 +33,23 @@ stock="$(modinfo -k "$KERNEL" -n vkms 2>/dev/null || true)"
 if [[ -n "$stock" ]]; then
 	case "$stock" in
 		"/lib/modules/${KERNEL}/kernel/"*) pass "Distro vkms remains in its packaged module tree: ${stock}" ;;
+		"(builtin)") pass "Distro vkms is built into the kernel" ;;
 		*) fail "Distro vkms resolves outside its packaged module tree: ${stock}" ;;
 	esac
 else
-	fail "Distro vkms no longer resolves for ${KERNEL}"
+	info "No stock vkms implementation is installed for ${KERNEL}"
 fi
 
 if [[ -d "/sys/module/${MODULE_NAME}" ]]; then
 	pass "${MODULE_NAME} is the loaded implementation"
 	parameter="$(cat -- "/sys/module/${MODULE_NAME}/parameters/create_default_dev" 2>/dev/null || true)"
 	[[ "$parameter" == "N" || "$parameter" == "0" ]] || fail "create_default_dev is not disabled (${parameter:-unavailable})"
-elif [[ -d /sys/module/vkms ]]; then
-	fail "The stock vkms module is loaded; reboot before using Monitorize custom VKMS modes"
 else
 	fail "No VKMS implementation is loaded; start Monitorize once or run: sudo modprobe ${MODULE_NAME} create_default_dev=0"
 fi
 
 configfs_root=""
-for candidate in /sys/kernel/config/vkms /config/vkms; do
+for candidate in /sys/kernel/config/monitorize-vkms /config/monitorize-vkms; do
 	if [[ -d "$candidate" ]]; then
 		configfs_root="$candidate"
 		break

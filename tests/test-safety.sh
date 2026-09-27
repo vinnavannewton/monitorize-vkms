@@ -39,8 +39,8 @@ assert_contains "${ROOT}/dkms.conf" 'NO_WEAK_MODULES="yes"'
 assert_contains "${ROOT}/install.sh" 'Compiling a disposable compatibility preflight before changing the system'
 assert_contains "${ROOT}/install.sh" "trap 'rollback_failed_install \$?' EXIT"
 assert_contains "${ROOT}/install.sh" 'mokutil --test-key'
-assert_contains "${ROOT}/install.sh" 'CONFIG_DRM_VKMS=y'
 assert_contains "${ROOT}/install.sh" 'Distro VKMS remains untouched'
+assert_contains "${ROOT}/install.sh" 'Built-in VKMS remains untouched'
 assert_contains "${ROOT}/install.sh" 'remove_legacy_versions'
 assert_contains "${ROOT}/install.sh" 'PATH=/usr/sbin:/usr/bin:/sbin:/bin'
 assert_contains "${ROOT}/install.sh" 'flock -n 9'
@@ -63,5 +63,4 @@ assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '2' > \"\
 assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${CONNECTOR}/edid_enabled\""
 assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${CONNECTOR}/enabled\""
 assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" 'find_monitorize_drm_card'
-
 printf 'monitorize-vkms safety checks passed\n'

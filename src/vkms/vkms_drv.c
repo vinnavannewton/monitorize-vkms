@@ -34,8 +34,8 @@
 #include "vkms_drv.h"
 #include "vkms_oot_compat.h"
 
-#define DRIVER_NAME	"vkms"
-#define DRIVER_DESC	"Virtual Kernel Mode Setting"
+#define DRIVER_NAME	"monitorize_vkms"
+#define DRIVER_DESC	"Monitorize Virtual Kernel Mode Setting"
 #define DRIVER_MAJOR	1
 #define DRIVER_MINOR	0
 

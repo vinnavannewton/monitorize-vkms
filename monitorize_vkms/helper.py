@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sys
 
+from monitorize_vkms.configfs import CONFIGFS_SUBSYSTEM
 
 INSTANCE_NAMES = {
     "primary": "monitorize",
@@ -67,11 +68,13 @@ def _module_loaded(module_name: str) -> bool:
 def _configfs_root(logs: list[str]) -> Path:
     mounts = _configfs_mounts()
     for mount in sorted(mounts, key=lambda path: len(str(path))):
-        if (mount / "vkms").is_dir():
+        if (mount / CONFIGFS_SUBSYSTEM).is_dir():
             logs.append(f"Using configfs mountpoint {mount}")
             return mount
     if mounts:
-        raise VkmsHelperError("This kernel's VKMS driver does not expose the required configfs interface.")
+        raise VkmsHelperError(
+            "Monitorize VKMS configfs is not registered. Reboot after installing or upgrading monitorize-vkms."
+        )
     raise VkmsHelperError("Linux configfs is unavailable; reboot after installing monitorize-vkms.")
 
 
@@ -87,7 +90,7 @@ def _require_bootstrap(root: Path, logs: list[str]) -> tuple[Path, Path]:
         raise VkmsHelperError(
             "Monitorize VKMS bootstrap is not initialized. Reboot after installing monitorize-vkms."
         )
-    instance = root / "vkms" / INSTANCE_NAMES["primary"]
+    instance = root / CONFIGFS_SUBSYSTEM / INSTANCE_NAMES["primary"]
     connector = instance / "connectors" / "connector0"
     required = (
         instance,
