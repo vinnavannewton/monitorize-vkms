@@ -17,6 +17,7 @@ It can be used as a **standalone CLI tool** or as the backend for [Monitorize](h
 | Hyprland | ❌ |
 | Niri | ✅ |
 | Cinnamon X11 | ✅ |
+| Cosmic | ⚠️ |
 
 ---
 
