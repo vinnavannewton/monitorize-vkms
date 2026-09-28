@@ -10,6 +10,10 @@ import os
 from pathlib import Path
 import sys
 
+if __name__ == "__main__":
+    # The installed helper lives in /usr/libexec, separate from its package in /usr/lib.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib" / "monitorize-vkms"))
+
 from monitorize_vkms.configfs import CONFIGFS_SUBSYSTEM
 
 INSTANCE_NAMES = {

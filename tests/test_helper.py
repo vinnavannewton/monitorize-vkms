@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -15,6 +18,32 @@ from monitorize_vkms.helper import (
     _disconnect_connector,
     _enable_connector,
 )
+
+
+class TestInstalledHelperStartup(unittest.TestCase):
+    def test_imports_package_from_installed_layout(self):
+        source = Path(__file__).resolve().parent.parent / "monitorize_vkms"
+        with TemporaryDirectory() as directory:
+            usr = Path(directory) / "usr"
+            helper_dir = usr / "libexec" / "monitorize-vkms"
+            package_dir = usr / "lib" / "monitorize-vkms" / "monitorize_vkms"
+            helper_dir.mkdir(parents=True)
+            package_dir.mkdir(parents=True)
+            helper = helper_dir / "monitorize-vkms-helper"
+            shutil.copy2(source / "helper.py", helper)
+            for filename in ("__init__.py", "configfs.py"):
+                shutil.copy2(source / filename, package_dir / filename)
+
+            result = subprocess.run(
+                [sys.executable, "-I", str(helper), "--help"],
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("create-custom", result.stdout)
 
 
 class TestConfigfsOwnership(unittest.TestCase):
