@@ -28,8 +28,11 @@ bash -n \
 	"${ROOT}/scripts/probe-drm-atomic-api.sh" \
 	"${ROOT}/scripts/monitorize-vkms-cli"
 
-for package_manager in 'dnf ' 'apt-get ' 'pacman ' 'zypper '; do
-	assert_not_contains "${ROOT}/install.sh" "$package_manager"
+for package_manager in dnf apt apt-get pacman zypper; do
+	if grep -Eq "^[[:space:]]*(sudo[[:space:]]+)?${package_manager}[[:space:]]" "${ROOT}/install.sh"; then
+		printf 'installer invokes package manager: %s\n' "$package_manager" >&2
+		exit 1
+	fi
 done
 
 assert_contains "${ROOT}/dkms.conf" 'BUILT_MODULE_NAME[0]="monitorize_vkms"'

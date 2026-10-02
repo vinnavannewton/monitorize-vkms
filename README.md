@@ -11,13 +11,13 @@ It can be used as a **standalone CLI tool** or as the backend for [Monitorize](h
 ## Supported desktops
 
 | Desktop Environments | Compatibility |
-| --- | :---: |
-| KDE Plasma | ✅ |
-| GNOME | ✅ |
-| Hyprland | ❌ |
-| Niri | ✅ |
-| Cinnamon X11 | ✅ |
-| Cosmic | ⚠️ |
+| -------------------- |:-------------:|
+| KDE Plasma           | ✅             |
+| GNOME                | ✅             |
+| Hyprland             | ❌             |
+| Niri                 | ✅             |
+| Cinnamon X11         | ✅             |
+| Cosmic               | ⚠️            |
 
 ---
 
@@ -46,11 +46,84 @@ monitorize-vkms remove
 
 ## Prerequisites
 
-Install DKMS, GCC, Make, and the matching kernel headers for your running kernel:
+Monitorize VKMS builds an out-of-tree kernel module with DKMS. Install build
+files matching your currently running kernel before running the installer.
+The commands below are for the standard kernel in each distribution.
 
-```sh
-# Verify kernel headers are present:
-test -f "/lib/modules/$(uname -r)/build/Makefile"
+### Arch Linux
+
+Update and reboot first so the kernel development files match the running
+kernel:
+
+```bash
+sudo pacman -Syu
+sudo reboot
+```
+
+After reboot, for the standard `linux` kernel:
+
+```bash
+sudo pacman -S --needed git dkms base-devel linux-headers python polkit mokutil
+```
+
+Use the header package for your kernel instead of `linux-headers` when needed:
+
+| Kernel package   | Header package           |
+| ---------------- | ------------------------ |
+| `linux`          | `linux-headers`          |
+| `linux-lts`      | `linux-lts-headers`      |
+| `linux-zen`      | `linux-zen-headers`      |
+| `linux-hardened` | `linux-hardened-headers` |
+
+Custom and AUR kernels need their corresponding header package.
+
+### Fedora
+
+Update and reboot first so the kernel development files match the running
+kernel:
+
+```bash
+sudo dnf update -y
+sudo reboot
+```
+
+```bash
+sudo dnf install -y git dkms gcc make "kernel-devel-$(uname -r)" python3 polkit mokutil
+```
+
+### Ubuntu / Debian
+
+```bash
+sudo apt update
+sudo apt install -y git dkms build-essential "linux-headers-$(uname -r)" python3 pkexec mokutil
+```
+
+### openSUSE Tumbleweed
+
+Update and reboot first so the kernel development files match the running
+kernel:
+
+```bash
+sudo zypper dup
+sudo reboot
+```
+
+After reboot, for the standard `kernel-default` kernel:
+
+```bash
+sudo zypper install git dkms gcc make kernel-devel kernel-default-devel python3 pkexec mokutil
+```
+
+Other kernel flavors need their matching `kernel-<flavor>-devel` package.
+
+### Verify kernel headers
+
+This is the build file the installer checks for the running kernel:
+
+```bash
+test -f "/lib/modules/$(uname -r)/build/Makefile" \
+  && echo "Kernel headers OK for $(uname -r)" \
+  || echo "ERROR: Matching kernel headers are missing for $(uname -r)"
 ```
 
 ---
@@ -112,40 +185,3 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 - **Atomic Rollback**: Any failure during installation immediately cleans up all staged files and DKMS registrations.
 
 ---
-
-## Documentation
-
-Cinnamon/X11 maps the Monitorize DRM connector to XRandR by its kernel
-`CONNECTOR_ID`, so Xorg-renamed outputs such as DRM `Virtual-2` appearing as
-XRandR `Virtual-1-2` are handled correctly. It enables the mapped output at the
-requested mode, places it to the right of the active primary output, and
-verifies the connector ID, geometry, and refresh rate. Removal uses the same
-mapping to disable the output before the kernel connector is disconnected.
-
-COSMIC Wayland uses its native `cosmic-randr` client. It reads named heads from
-`cosmic-randr list --kdl`, waits for the configuration result when enabling or
-disabling the exact Monitorize output, and confirms the new state with a fresh
-query. This avoids requiring a distro version of `wlr-randr` with `--json`.
-
-Other Wayland compositors besides GNOME/KDE/Cinnamon/COSMIC require `wlr-randr` with `--json`
-support and the `zwlr_output_manager_v1` protocol. Support is probed through
-the actual protocol connection, including for unrecognized Wayland desktops.
-Removal disables the exact Monitorize output and confirms its disabled state
-before disconnecting it in configfs. Failed, unsupported, ambiguous, or timed-out
-requests leave the kernel connector connected and return an error. Removing the
-last enabled compositor output is refused. Creation re-enables a previously
-disabled output. The DRM card and topology remain persistent.
-
-This ordering requires live validation on each compositor. Protocol confirmation
-does not guarantee completion of internal renderer cleanup. Hyprland 0.56.2 with
-Aquamarine 0.15.0 has crashed on output disable itself, before kernel disconnect.
-Live removal is therefore blocked in Hyprland until a compositor fix is validated:
-the command returns an error and leaves the display connected. Log out of Hyprland
-before removing it from a separate text console. This is crash containment, not a
-working live-removal fix. No compositor restart or alternate virtual display is
-used as a fallback. Hyprland uses Aquamarine, so this failure is not proof of the
-same bug in wlroots compositors such as Sway.
-
-- [Development and manual testing](docs/DEVELOPMENT.md)
-- [Upstream tracking](docs/UPSTREAM.md)
-- [Source provenance](src/vkms/ORIGIN.md)
