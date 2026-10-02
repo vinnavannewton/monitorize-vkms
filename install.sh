@@ -89,16 +89,18 @@ print_dependency_help() {
 	printf '[Monitorize VKMS] The installer will never invoke a package manager or install a kernel.\n' >&2
 	case "$DISTRO_FAMILY" in
 		fedora)
-			printf '[Monitorize VKMS] Fedora: install dkms, gcc, make, and the exact headers for %s.\n' "$KERNEL" >&2
+			printf '[Monitorize VKMS] Fedora: sudo dnf install dkms gcc make kernel-devel-%s python3 polkit\n' "$KERNEL" >&2
 			;;
 		debian)
-			printf '[Monitorize VKMS] Debian/Ubuntu: install dkms, build-essential, and linux-headers-%s.\n' "$KERNEL" >&2
+			printf '[Monitorize VKMS] Debian/Ubuntu: sudo apt install dkms build-essential linux-headers-%s python3 pkexec\n' "$KERNEL" >&2
 			;;
 		arch)
-			printf '[Monitorize VKMS] Arch: fully upgrade/reboot first, then install dkms, base-devel, and matching kernel headers.\n' >&2
+			printf '[Monitorize VKMS] Arch: fully upgrade and reboot first.\n' >&2
+			printf '[Monitorize VKMS] Install: sudo pacman -S --needed dkms base-devel python polkit <matching-kernel-headers>\n' >&2
+			printf '[Monitorize VKMS] Examples: linux-headers, linux-lts-headers, linux-zen-headers, linux-hardened-headers\n' >&2
 			;;
 		suse)
-			printf '[Monitorize VKMS] openSUSE: fully update/reboot first, then install dkms, gcc, make, and matching kernel-devel packages.\n' >&2
+			printf '[Monitorize VKMS] openSUSE: run zypper dup and reboot first; then install dkms gcc make kernel-devel kernel-default-devel python3 pkexec.\n' >&2
 			;;
 	esac
 }
@@ -106,9 +108,12 @@ print_dependency_help() {
 check_prerequisites() {
 	local missing=()
 	local command
-	for command in dkms make gcc install modinfo depmod find sort flock nm; do
+	for command in dkms make gcc install modinfo depmod find sort flock nm grep cmp mktemp chmod mv chown systemctl modprobe readlink tr mkdir ln python3 pkexec; do
 		command -v "$command" >/dev/null || missing+=("$command")
 	done
+	if [[ -d /sys/firmware/efi ]] && ! command -v mokutil >/dev/null; then
+		missing+=("mokutil (required on EFI systems)")
+	fi
 	[[ -f "${KERNEL_BUILD_DIR}/Makefile" ]] || missing+=("${KERNEL_BUILD_DIR}/Makefile")
 
 	if ((${#missing[@]})); then

@@ -28,6 +28,11 @@ class InstallerSecureBootTest(unittest.TestCase):
                     printf '%s\\n' {shlex.quote(output)}
                     return {code}
                 }}'''
+            else:
+                mock = '''command() {
+                    if [[ $1 == -v && $2 == mokutil ]]; then return 1; fi
+                    builtin command "$@"
+                }'''
             script = f'''set -euo pipefail
                 log() {{ printf '%s\\n' "$*"; }}
                 die() {{ printf '%s\\n' "$*" >&2; exit 1; }}
@@ -36,8 +41,8 @@ class InstallerSecureBootTest(unittest.TestCase):
                 check_secure_boot
                 printf 'RESULT=%s\\n' "$SECURE_BOOT_STATE"
             '''
-            return subprocess.run(['/bin/bash', '-c', script], env={'PATH': ''},
-                                  capture_output=True, text=True, check=False)
+            return subprocess.run(['/bin/bash', '-c', script], env={'PATH': '/usr/bin:/bin'},
+                                  capture_output=True, text=True, check=False, timeout=5)
 
     def test_legacy_bios_does_not_call_installed_mokutil(self):
         result = self.check_boot(efi=False, output='EFI variables are not supported on this system', code=1)
