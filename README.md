@@ -2,7 +2,7 @@
 
 Standalone virtual display tool and out-of-tree VKMS kernel module for Linux.
 
-`monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates, complete with dynamic EDID generation and automatic desktop layout integration (GNOME, KDE Plasma, and Cinnamon/X11).
+`monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates, complete with dynamic EDID generation and desktop layout integration for validated backends.
 
 It can be used as a **standalone CLI tool** or as the backend for [Monitorize](https://github.com/vinnavannewton/monitorize).
 
@@ -14,10 +14,27 @@ It can be used as a **standalone CLI tool** or as the backend for [Monitorize](h
 | -------------------- |:-------------:|
 | KDE Plasma           | ✅             |
 | GNOME                | ✅             |
-| Hyprland             | ❌             |
-| Niri                 | ✅             |
 | Cinnamon X11         | ✅             |
-| Cosmic               | ⚠️            |
+| Headless DRM         | ✅             |
+| Hyprland             | ❌             |
+| Niri / Sway / wlroots| ❌             |
+| COSMIC               | ❌             |
+
+The helper refuses to connect a display for desktop sessions whose requested
+mode and removal lifecycle are not verified. Live removal on COSMIC and
+Hyprland remains disabled because output-manager acknowledgements do not prove
+that renderer teardown has completed. `monitorize-vkms doctor` reports create,
+remove, and service-manager support separately.
+
+These backends have lifecycle guards; this is not a guarantee for every distro,
+desktop version, or kernel 7.0+ build. Live testing on each target remains necessary.
+
+Display ownership is tied to the creating user, login session, boot, and DRM
+connector. Remove it from the same session. An identical repeated create leaves
+the existing display and its cleanup ownership intact. If activation or removal
+cannot be confirmed, the helper leaves the connector attached. Retry removal in
+the owning session; reboot to recover when that session or its output identity
+is no longer available.
 
 ---
 
@@ -48,6 +65,12 @@ monitorize-vkms remove
 
 Monitorize VKMS builds an out-of-tree kernel module with DKMS. Install build
 files matching your currently running kernel before running the installer.
+The source installer currently supports the listed systemd-based distro
+families and requires systemd-logind. NixOS and alternative init systems need a
+separate native packaging/service adapter; the installer fails before system
+changes when those environments are detected. Kernel API support is determined
+by compiling against the installed kernel headers, not by the kernel version
+string alone.
 The commands below are for the standard kernel in each distribution.
 
 ### Arch Linux
@@ -145,6 +168,11 @@ The installer:
 4. Installs the standalone CLI (`/usr/bin/monitorize-vkms`), helper (`/usr/libexec/monitorize-vkms/monitorize-vkms-helper`), and Polkit policy (`/usr/share/polkit-1/actions/io.github.vinnavannewton.monitorize-vkms.policy`).
 
 Reboot once after installation to create the persistent DRM card.
+
+Upgrades snapshot the owned tools, configuration, DKMS records, and installed
+module files for rollback. A matching registered version can be built for a new
+kernel; changed module build inputs require a new package version. If rollback
+fails, the installer reports and retains the recovery snapshot directory.
 
 ---
 

@@ -85,6 +85,16 @@ class TestDrmDiscovery(unittest.TestCase):
             )
         self.assertIn("FAIL_STAGE=DRM_CONNECTOR_APPEAR", str(ctx.exception))
 
+    def test_duplicate_connector_names_across_cards_are_refused(self):
+        for card in ("card0", "card2"):
+            conn = self.drm_root / f"{card}-Virtual-1"
+            conn.mkdir()
+            (conn / "device").symlink_to(self.faux_dev)
+            (conn / "status").write_text("connected\n")
+            (conn / "connector_id").write_text("41\n")
+        with self.assertRaisesRegex(MonitorizeVkmsError, "ambiguous discovery"):
+            monitorize_drm_connectors(drm_root=self.drm_root)
+
     def test_wait_reuses_persistent_connector_when_it_becomes_ready(self):
         conn = self.drm_root / "card0-Virtual-1"
         conn.mkdir()

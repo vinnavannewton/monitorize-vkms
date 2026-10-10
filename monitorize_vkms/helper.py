@@ -1,14 +1,24 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -I
 """Restricted root helper for Monitorize's source-install VKMS backend."""
 
 from __future__ import annotations
 
 import argparse
 import base64
+import fcntl
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
+import pwd
+import secrets
+import signal
+import shutil
+import stat
+import subprocess
 import sys
+import time
 
 if __name__ == "__main__":
     # The installed helper lives in /usr/libexec, separate from its package in /usr/lib.
@@ -22,6 +32,9 @@ INSTANCE_NAMES = {
 CUSTOM_MODULE_NAME = "monitorize_vkms"
 CONNECTOR_STATUS_CONNECTED = "1"
 CONNECTOR_STATUS_DISCONNECTED = "2"
+LIFECYCLE_LOCK = Path("/run/lock/monitorize-vkms.lock")
+STATE_DIRECTORY = Path("/run/monitorize-vkms")
+LEASE_PATH = STATE_DIRECTORY / "primary.json"
 MODULE_PATHS = {
     CUSTOM_MODULE_NAME: Path(f"/sys/module/{CUSTOM_MODULE_NAME}"),
 }
@@ -40,6 +53,271 @@ def _require_polkit_root() -> None:
         raise VkmsHelperError("Administrator authorization is required to create a VKMS virtual display.")
     if not os.environ.get("PKEXEC_UID", "").isdigit():
         raise VkmsHelperError("This helper must be started through Polkit.")
+
+
+def _acquire_lifecycle_lock():
+    if os.geteuid() != 0:
+        raise VkmsHelperError("Display lifecycle operations require the privileged helper.")
+    fd = None
+    try:
+        fd = os.open(LIFECYCLE_LOCK, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1:
+            raise VkmsHelperError("The Monitorize VKMS lifecycle lock is not a root-owned regular file.")
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except (OSError, VkmsHelperError) as exc:
+        if fd is not None:
+            os.close(fd)
+        if isinstance(exc, VkmsHelperError):
+            raise
+        raise VkmsHelperError("Another Monitorize VKMS install, bootstrap, or display operation is running.") from exc
+
+
+def _active_session(uid: int) -> tuple[str, dict[str, str]]:
+    """Resolve one active local logind session and build a small worker environment."""
+    loginctl = shutil.which("loginctl")
+    if not loginctl:
+        raise VkmsHelperError("systemd-logind is required to identify the caller's desktop session safely.")
+    try:
+        sessions = subprocess.run(
+            [loginctl, "show-user", str(uid), "--property=Sessions", "--value"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.split()
+        if len(sessions) > 16:
+            raise VkmsHelperError("Too many login sessions to safely select a desktop session.")
+        active: list[tuple[str, dict[str, str]]] = []
+        for session in sessions:
+            result = subprocess.run(
+                [loginctl, "show-session", session, "--no-pager", "--property=Active", "--property=Remote",
+                 "--property=Type", "--property=Desktop", "--property=Leader", "--property=Display", "--property=User"],
+                capture_output=True, text=True, timeout=5, check=True,
+            )
+            values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            if values.get("User") != str(uid):
+                raise VkmsHelperError("The selected login session does not belong to the authenticated caller.")
+            if values.get("Active") != "yes" or values.get("Remote") != "no":
+                continue
+            if values.get("Type") not in ("x11", "wayland", "tty"):
+                continue
+            env: dict[str, str] = {}
+            try:
+                leader = int(values.get("Leader", "0"))
+                env.update(_parse_session_environment(Path(f"/proc/{leader}/environ").read_bytes()))
+            except (OSError, ValueError):
+                pass
+            account = pwd.getpwuid(uid)
+            env.update({"HOME": account.pw_dir, "USER": account.pw_name, "LOGNAME": account.pw_name,
+                        "PATH": "/usr/local/bin:/usr/bin:/bin", "XDG_RUNTIME_DIR": f"/run/user/{uid}"})
+            env["XDG_SESSION_TYPE"] = values.get("Type", "")
+            if values.get("Desktop"):
+                env.setdefault("XDG_CURRENT_DESKTOP", values["Desktop"])
+            known_dbus_desktop = any(
+                name in env.get("XDG_CURRENT_DESKTOP", "").lower()
+                for name in ("kde", "plasma", "gnome", "cinnamon")
+            )
+            if values.get("Type") == "wayland" and not env.get("WAYLAND_DISPLAY") and not known_dbus_desktop:
+                raise VkmsHelperError("Could not resolve the caller's Wayland socket from the active session.")
+            if values.get("Type") == "x11" and not env.get("DISPLAY"):
+                display = values.get("Display", "")
+                if display:
+                    env["DISPLAY"] = display
+                else:
+                    raise VkmsHelperError("Could not resolve the caller's X display from the active session.")
+            if not env.get("DBUS_SESSION_BUS_ADDRESS") and Path(f"/run/user/{uid}/bus").exists():
+                env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{uid}/bus"
+            env["XDG_SESSION_TYPE"] = values.get("Type", "")
+            env["XDG_SESSION_ID"] = session
+            if values.get("Desktop"):
+                env.setdefault("XDG_CURRENT_DESKTOP", values["Desktop"])
+            active.append((session, env))
+        if len(active) != 1:
+            raise VkmsHelperError("The caller must have exactly one active local desktop session for VKMS changes.")
+        if active[0][1].get("XDG_SESSION_TYPE") == "tty":
+            _require_no_graphical_sessions(loginctl)
+        return active[0]
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise VkmsHelperError(f"Could not verify the caller's active desktop session: {exc}") from exc
+
+
+def _require_no_graphical_sessions(loginctl: str) -> None:
+    result = subprocess.run([loginctl, "list-sessions", "--no-legend", "--no-pager"],
+                            capture_output=True, text=True, timeout=5, check=True)
+    sessions = [line.split()[0] for line in result.stdout.splitlines() if line.split()]
+    if len(sessions) > 32:
+        raise VkmsHelperError("Too many sessions to safely verify headless operation.")
+    for session in sessions:
+        result = subprocess.run([loginctl, "show-session", session, "--property=Type", "--property=Remote"],
+                                capture_output=True, text=True, timeout=3, check=True)
+        values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        if values.get("Remote") != "yes" and values.get("Type") in {"wayland", "x11"}:
+            raise VkmsHelperError("Headless VKMS operations require all local graphical sessions to be logged out.")
+
+
+def _parse_session_environment(raw: bytes) -> dict[str, str]:
+    allowed = {"DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP",
+               "XDG_SESSION_DESKTOP", "DESKTOP_SESSION", "DBUS_SESSION_BUS_ADDRESS"}
+    env: dict[str, str] = {}
+    for item in raw.split(b"\0"):
+        key, sep, value = item.partition(b"=")
+        name = key.decode(errors="ignore")
+        if sep and name in allowed:
+            env[name] = value.decode(errors="ignore")
+    return env
+
+
+def _read_lease() -> dict | None:
+    try:
+        info = LEASE_PATH.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+            raise VkmsHelperError("Monitorize VKMS ownership state has unsafe permissions.")
+        value = json.loads(LEASE_PATH.read_text())
+        return value if isinstance(value, dict) else None
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise VkmsHelperError(f"Could not safely read Monitorize VKMS ownership state: {exc}") from exc
+
+
+def _write_lease(lease: dict) -> None:
+    try:
+        STATE_DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = STATE_DIRECTORY.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+            raise VkmsHelperError("Monitorize VKMS runtime state directory has unsafe ownership or permissions.")
+        temporary = STATE_DIRECTORY / f".primary.{secrets.token_hex(8)}.tmp"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(lease, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, LEASE_PATH)
+    except OSError as exc:
+        raise VkmsHelperError(f"Could not persist Monitorize VKMS ownership state: {exc}") from exc
+
+
+def _remove_lease() -> None:
+    try:
+        LEASE_PATH.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _lease_matches_request(lease: dict | None, *, uid: int, session: str, boot_id: str,
+                           edid_sha256: str, mode: list[float] | None) -> bool:
+    return bool(
+        lease
+        and lease.get("uid") == uid
+        and lease.get("session") == session
+        and lease.get("boot_id") == boot_id
+        and lease.get("edid_sha256") == edid_sha256
+        and (mode is None or lease.get("mode") == mode)
+        and lease.get("state") == "active"
+    )
+
+
+def _validate_compositor_support(desktop: str | None, env: dict[str, str]) -> None:
+    if desktop == "cinnamon" and env.get("XDG_SESSION_TYPE") != "x11":
+        raise VkmsHelperError("Cinnamon display creation is supported only in an X11 session.")
+    if desktop in {"cosmic", "hyprland"}:
+        raise VkmsHelperError(
+            f"Display creation is disabled on {desktop}: this checkout cannot safely "
+            "verify mode activation and live removal for that compositor."
+        )
+    if desktop not in {"gnome", "kde", "cinnamon", None}:
+        raise VkmsHelperError(
+            f"Display creation is unsupported for detected compositor {desktop!r}; "
+            "refusing to connect a display that cannot be safely managed."
+        )
+    if desktop is None and (env.get("WAYLAND_DISPLAY") or env.get("DISPLAY")
+                            or env.get("XDG_SESSION_TYPE") in {"wayland", "x11"}):
+        raise VkmsHelperError(
+            "No supported desktop backend was detected; refusing to connect an unmanaged output."
+        )
+
+
+def _run_worker(uid: int, env: dict[str, str], payload: dict, timeout: float = 30.0) -> dict:
+    setpriv = shutil.which("setpriv")
+    if not setpriv:
+        raise VkmsHelperError("setpriv is required to run compositor operations as the desktop-session owner.")
+    command = [setpriv, f"--reuid={uid}", f"--regid={pwd.getpwuid(uid).pw_gid}", "--init-groups",
+               sys.executable, "-I", str(Path(__file__).resolve()), "--worker"]
+    try:
+        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, env=env, close_fds=True, start_new_session=True) as worker:
+            try:
+                stdout, stderr = worker.communicate(json.dumps(payload), timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                try:
+                    os.killpg(worker.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                worker.communicate()
+                raise VkmsHelperError("Desktop-session operation timed out; its command group was stopped.") from exc
+            result = subprocess.CompletedProcess(command, worker.returncode, stdout, stderr)
+    except OSError as exc:
+        raise VkmsHelperError(f"Desktop-session operation could not complete safely: {exc}") from exc
+    response = None
+    for line in reversed(result.stdout.splitlines()):
+        try:
+            response = json.loads(line)
+            break
+        except json.JSONDecodeError:
+            continue
+    if result.returncode or not isinstance(response, dict) or not response.get("success"):
+        detail = response.get("message", "") if isinstance(response, dict) else ""
+        raise VkmsHelperError(detail or result.stderr.strip() or "Desktop-session operation failed.")
+    return response
+
+
+def _worker_main() -> int:
+    if os.geteuid() == 0:
+        raise VkmsHelperError("Internal compositor worker must not run as root.")
+    request = json.load(sys.stdin)
+    from monitorize_vkms.compositor import (
+        activate_in_compositor, deactivate_in_compositor, detect_compositor, get_compositor_snapshot,
+    )
+    from monitorize_vkms.errors import CompositorError
+    from monitorize_vkms.drm import monitorize_drm_connectors
+    action = request.get("action")
+    if action == "snapshot":
+        desktop, state = get_compositor_snapshot()
+        if isinstance(state, set):
+            state = sorted(state)
+        print(json.dumps({"success": True, "desktop": desktop, "state": state}))
+        return 0
+    desktop = detect_compositor()
+    _validate_compositor_support(desktop, dict(os.environ))
+    name = request.get("name")
+    current = monitorize_drm_connectors().get(name)
+    if not current or current.get("status") != "connected":
+        raise VkmsHelperError("The exact Monitorize DRM connector is no longer connected.")
+    if request.get("connector_id") is not None and current.get("connector_id") != request["connector_id"]:
+        raise VkmsHelperError("The Monitorize DRM connector identity changed during the operation.")
+    if request.get("card") is not None and current.get("card") != request["card"]:
+        raise VkmsHelperError("The Monitorize DRM card identity changed during the operation.")
+    if action == "activate":
+        width, height, refresh = request["mode"]
+        snapshot_state = request.get("snapshot")
+        if desktop in ("gnome", "cinnamon") and isinstance(snapshot_state, dict):
+            snapshot_state = {name: tuple(identity) for name, identity in snapshot_state.items()}
+        ok, details, message = activate_in_compositor(
+            desktop, snapshot_state, width, height, refresh,
+            expected_output_name=name, expected_connector_id=request.get("connector_id"),
+        )
+        if not ok:
+            raise CompositorError(message)
+        print(json.dumps({"success": True, "desktop": desktop, "details": details, "message": message}))
+        return 0
+    if action == "deactivate":
+        if not deactivate_in_compositor(
+            desktop, None, target_name=name, target_connector_id=request.get("connector_id")
+        ):
+            raise CompositorError(f"The compositor did not confirm deactivation of {name}.")
+        print(json.dumps({"success": True, "desktop": desktop}))
+        return 0
+    raise VkmsHelperError("Unknown internal compositor operation.")
 
 
 def _decode_mount_path(value: str) -> str:
@@ -142,6 +420,33 @@ def _validate_edid(edid: bytes) -> None:
         raise VkmsHelperError("Custom VKMS EDID checksum is invalid.")
 
 
+def _validate_requested_mode(mode: list[float]) -> list[float]:
+    try:
+        width, height, refresh = int(mode[0]), int(mode[1]), float(mode[2])
+        if (not all(math.isfinite(float(value)) for value in mode)
+                or width != mode[0] or height != mode[1]
+                or not (1 <= width <= 4095 and 1 <= height <= 4095 and 24 <= refresh <= 240)):
+            raise ValueError("Mode dimensions and refresh must be finite and in the supported range")
+    except (ValueError, OverflowError, IndexError, TypeError) as exc:
+        raise VkmsHelperError(f"Invalid requested display mode: {exc}") from exc
+    return [width, height, refresh]
+
+
+def _validate_edid_mode(edid: bytes, mode: list[float]) -> None:
+    from monitorize_vkms.edid import parse_preferred_timing
+
+    width, height, refresh = _validate_requested_mode(mode)
+    try:
+        timing = parse_preferred_timing(edid)
+    except (ValueError, ArithmeticError) as exc:
+        raise VkmsHelperError(f"Could not validate custom EDID timing: {exc}") from exc
+    if (timing.width, timing.height) != (width, height) or abs(timing.refresh_hz - refresh) > 0.75:
+        raise VkmsHelperError(
+            f"Custom EDID preferred timing {timing.width}x{timing.height}@{timing.refresh_hz:g}Hz "
+            f"does not match requested {width}x{height}@{refresh:g}Hz."
+        )
+
+
 def _probe_custom_edid_support(root: Path, logs: list[str]) -> bool:
     _instance, connector = _require_bootstrap(root, logs)
     supported = (connector / "edid").is_file() and (connector / "edid_enabled").is_file()
@@ -162,8 +467,6 @@ def _disconnect_connector(connector: Path, logs: list[str]) -> bool:
 
 
 def _enable_connector(connector: Path, logs: list[str], custom_edid: bytes | None) -> bool:
-    logs.append("Configuring persistent Monitorize VKMS connector while disconnected")
-    _disconnect_connector(connector, logs)
     if custom_edid is not None:
         _validate_edid(custom_edid)
         edid = connector / "edid"
@@ -171,11 +474,16 @@ def _enable_connector(connector: Path, logs: list[str], custom_edid: bytes | Non
         if not edid.is_file() or not edid_enabled.is_file():
             raise CustomEdidUnsupported("The bootstrapped VKMS connector does not expose per-connector EDID support.")
         logs.append("Writing validated custom EDID while connector is disconnected")
+        if _read(connector / "status") != CONNECTOR_STATUS_DISCONNECTED:
+            raise VkmsHelperError("Refusing to replace EDID on a connected Monitorize output; remove it first.")
         _write_bytes(edid, custom_edid)
         _write(edid_enabled, "1")
         logs.append("Custom EDID written and enabled")
     else:
+        if _read(connector / "status") != CONNECTOR_STATUS_DISCONNECTED:
+            raise VkmsHelperError("Refusing to replace a connected Monitorize output; remove it first.")
         _write(connector / "edid_enabled", "0")
+    logs.append("Configuring persistent Monitorize VKMS connector while disconnected")
     logs.append("Connecting persistent Monitorize VKMS connector")
     _write(connector / "status", CONNECTOR_STATUS_CONNECTED)
     if _read(connector / "status") != CONNECTOR_STATUS_CONNECTED:
@@ -185,17 +493,24 @@ def _enable_connector(connector: Path, logs: list[str], custom_edid: bytes | Non
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage Monitorize's fixed VKMS configfs instances.")
-    parser.add_argument("operation", choices=("create", "create-custom", "destroy", "status", "capability"))
+    parser.add_argument("operation", nargs="?", choices=("create", "create-custom", "destroy", "status", "capability"))
     parser.add_argument("--slot", choices=tuple(INSTANCE_NAMES), default="primary")
     parser.add_argument("edid_base64", nargs="?")
+    parser.add_argument("--mode", nargs=3, type=float, metavar=("WIDTH", "HEIGHT", "REFRESH"))
+    parser.add_argument("--generation")
+    parser.add_argument("--worker", action="store_true")
     args = parser.parse_args()
+    if args.worker:
+        return _worker_main()
     _require_polkit_root()
+    if args.operation is None:
+        parser.error("an operation is required")
 
     logs: list[str] = []
     root = _configfs_root(logs)
     instance, connector = _require_bootstrap(root, logs)
     changed = False
-    
+
     response = {
         "success": True,
         "operation": args.operation,
@@ -203,18 +518,150 @@ def main() -> int:
         "instance": str(instance),
     }
 
-    if args.operation == "create":
-        changed = _enable_connector(connector, logs, None)
+    if args.operation in ("create", "create-custom"):
+        lock_fd = _acquire_lifecycle_lock()
+        try:
+            uid = int(os.environ["PKEXEC_UID"])
+            session_id, env = _active_session(uid)
+            if args.mode is not None:
+                args.mode = _validate_requested_mode(args.mode)
+            custom_edid = None
+            if args.operation == "create-custom":
+                if not args.edid_base64:
+                    raise VkmsHelperError("Custom VKMS creation requires an EDID payload.")
+                try:
+                    custom_edid = base64.b64decode(args.edid_base64, validate=True)
+                except (ValueError, TypeError) as exc:
+                    raise VkmsHelperError("Custom VKMS EDID payload is not valid base64.") from exc
+                _validate_edid(custom_edid)
+                if args.mode is None or len(args.mode) != 3:
+                    raise VkmsHelperError("Custom VKMS creation requires the requested display mode.")
+                _validate_edid_mode(custom_edid, args.mode)
+                args.mode = [int(args.mode[0]), int(args.mode[1]), args.mode[2]]
+            connected = _read(connector / "status") == CONNECTOR_STATUS_CONNECTED
+            lease = _read_lease()
+            digest = hashlib.sha256(custom_edid or b"").hexdigest()
+            if connected:
+                boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+                if _lease_matches_request(lease, uid=uid, session=session_id, boot_id=boot_id,
+                                          edid_sha256=digest, mode=args.mode):
+                    from monitorize_vkms.drm import monitorize_drm_connectors
+                    current = monitorize_drm_connectors().get(lease.get("connector"))
+                    if (not current or current.get("status") != "connected"
+                            or current.get("connector_id") != lease.get("connector_id")
+                            or current.get("card") != lease.get("card")):
+                        raise VkmsHelperError("Owned display's DRM connector identity is missing or changed.")
+                    response.update({"changed": False, "created": False, "generation": lease["generation"],
+                                     "connector": lease.get("connector"), "card": lease.get("card"),
+                                     "compositor": lease.get("desktop"), "compositor_details": {}})
+                    response["logs"] = logs + ["Identical owned display already exists; leaving its generation unchanged"]
+                    print(json.dumps(response))
+                    return 0
+                raise VkmsHelperError("A connected Monitorize output is already present but cannot be safely replaced or claimed. Remove it from its owning session first.")
+            if lease and lease.get("state") not in ("active", "pending"):
+                raise VkmsHelperError("Monitorize VKMS ownership state is inconsistent; refusing another create.")
+            drm_before = set()
+            from monitorize_vkms.drm import monitorize_drm_connectors
+            drm_before = set(monitorize_drm_connectors())
+            snapshot = _run_worker(uid, env, {"action": "snapshot"})
+            desktop = snapshot.get("desktop")
+            _validate_compositor_support(desktop, env)
+            if desktop is not None and args.mode is None:
+                raise VkmsHelperError("Graphical display creation requires a requested mode for verified activation.")
+            generation = secrets.token_hex(16)
+            lease = {
+                "uid": uid, "session": session_id, "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+                "generation": generation, "state": "pending", "edid_sha256": digest,
+                "desktop": snapshot.get("desktop"), "mode": args.mode,
+            }
+            _write_lease(lease)
+            changed = _enable_connector(connector, logs, custom_edid)
+            deadline = time.monotonic() + 8.0
+            drm_connector = None
+            while time.monotonic() < deadline:
+                current = monitorize_drm_connectors()
+                candidates = [item for name, item in current.items() if name not in drm_before and item.get("status") == "connected"]
+                if not candidates:
+                    candidates = [item for item in current.values() if item.get("status") == "connected"]
+                if len(candidates) == 1:
+                    drm_connector = candidates[0]
+                    break
+                if len(candidates) > 1:
+                    raise VkmsHelperError("Multiple Monitorize DRM connectors appeared; refusing ambiguous activation.")
+                time.sleep(0.1)
+            if not drm_connector:
+                raise VkmsHelperError("Monitorize VKMS connected, but its DRM connector did not appear; it remains connected for safe recovery.")
+            if type(drm_connector.get("connector_id")) is not int or drm_connector["connector_id"] <= 0:
+                raise VkmsHelperError("Monitorize DRM connector has no reliable object identity; it remains connected for safe recovery.")
+            lease.update({"connector": drm_connector["name"], "card": drm_connector["card"],
+                          "connector_id": drm_connector.get("connector_id")})
+            _write_lease(lease)
+            if args.mode:
+                width, height, refresh = args.mode
+                mode_deadline = time.monotonic() + 5.0
+                while (f"{width}x{height}" not in drm_connector.get("modes", [])
+                       and time.monotonic() < mode_deadline):
+                    time.sleep(0.1)
+                    refreshed = monitorize_drm_connectors().get(drm_connector["name"])
+                    if refreshed and refreshed.get("connector_id") == drm_connector.get("connector_id"):
+                        drm_connector = refreshed
+                if f"{width}x{height}" not in drm_connector.get("modes", []):
+                    raise VkmsHelperError("Requested mode was not published by the Monitorize DRM connector; it remains connected for safe recovery.")
+                worker_result = _run_worker(uid, env, {
+                    "action": "activate", "name": drm_connector["name"],
+                    "connector_id": drm_connector.get("connector_id"), "card": drm_connector["card"], "mode": args.mode,
+                    "snapshot": snapshot.get("state"),
+                })
+                lease["state"] = "active"
+                lease["desktop"] = worker_result.get("desktop")
+                _write_lease(lease)
+                response["compositor"] = worker_result.get("desktop")
+                response["compositor_details"] = worker_result.get("details", {})
+            else:
+                lease["state"] = "active"
+                _write_lease(lease)
+            response.update({"changed": changed, "created": True, "generation": generation,
+                             "connector": drm_connector["name"], "card": drm_connector["card"]})
+        finally:
+            os.close(lock_fd)
+    elif args.operation == "destroy":
+        lock_fd = _acquire_lifecycle_lock()
+        try:
+            uid = int(os.environ["PKEXEC_UID"])
+            session_id, env = _active_session(uid)
+            lease = _read_lease()
+            connected = _read(connector / "status") == CONNECTOR_STATUS_CONNECTED
+            if not connected:
+                response["changed"] = False
+                response["logs"] = logs + ["Persistent Monitorize VKMS connector is already disconnected"]
+                print(json.dumps(response))
+                return 0
+            if not lease:
+                raise VkmsHelperError("Connected Monitorize output has no trusted owner record; refusing to disconnect it.")
+            if lease.get("uid") != uid or lease.get("session") != session_id:
+                raise VkmsHelperError("Only the active session that created this Monitorize display can remove it.")
+            if args.generation and args.generation != lease.get("generation"):
+                raise VkmsHelperError("This foreground process no longer owns the current display generation; leaving it connected.")
+            if Path("/proc/sys/kernel/random/boot_id").read_text().strip() != lease.get("boot_id"):
+                raise VkmsHelperError("Display ownership belongs to a previous boot; refusing automatic disconnect.")
+            from monitorize_vkms.drm import monitorize_drm_connectors
+            matches = [item for item in monitorize_drm_connectors().values()
+                       if item.get("name") == lease.get("connector") and item.get("status") == "connected"]
+            if (len(matches) != 1 or type(lease.get("connector_id")) is not int
+                    or matches[0].get("connector_id") != lease.get("connector_id")
+                    or matches[0].get("card") != lease.get("card")):
+                raise VkmsHelperError("The saved DRM connector identity is missing or changed; refusing disconnect.")
+            if lease.get("desktop") is not None or env.get("WAYLAND_DISPLAY") or env.get("DISPLAY"):
+                _run_worker(uid, env, {"action": "deactivate", "name": lease["connector"],
+                                       "connector_id": lease.get("connector_id"), "card": lease.get("card")})
+            changed = _disconnect_connector(connector, logs)
+            _remove_lease()
+        finally:
+            os.close(lock_fd)
     elif args.operation == "create-custom":
         if not args.edid_base64:
             raise VkmsHelperError("Custom VKMS creation requires an EDID payload.")
-        try:
-            custom_edid = base64.b64decode(args.edid_base64, validate=True)
-        except (ValueError, TypeError) as exc:
-            raise VkmsHelperError("Custom VKMS EDID payload is not valid base64.") from exc
-        changed = _enable_connector(connector, logs, custom_edid)
-    elif args.operation == "destroy":
-        changed = _disconnect_connector(connector, logs)
+        raise VkmsHelperError("Custom create did not enter the lifecycle transaction.")
     elif args.operation == "capability":
         capability = "supported" if _probe_custom_edid_support(root, logs) else "unsupported"
         response["capability"] = capability
@@ -224,7 +671,6 @@ def main() -> int:
         edid_enabled = False
         if edid_supported:
             edid_enabled = _read(connector / "edid_enabled") == "1"
-        
         response["connector_enabled"] = connector_enabled
         response["connector_connected"] = (
             _read(connector / "status") == CONNECTOR_STATUS_CONNECTED
@@ -232,7 +678,7 @@ def main() -> int:
         response["edid_enabled"] = edid_enabled
         response["edid_supported"] = edid_supported
 
-    response["changed"] = changed
+    response.setdefault("changed", changed)
     response["logs"] = logs
 
     print(json.dumps(response))
@@ -245,6 +691,6 @@ if __name__ == "__main__":
     except CustomEdidUnsupported as exc:
         print(json.dumps({"success": False, "message": str(exc), "error_kind": "custom_edid_unsupported"}))
         sys.exit(1)
-    except (OSError, VkmsHelperError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         print(json.dumps({"success": False, "message": str(exc)}))
         sys.exit(1)

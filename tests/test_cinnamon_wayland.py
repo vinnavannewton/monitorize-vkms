@@ -78,7 +78,9 @@ class CinnamonWaylandTest(unittest.TestCase):
                 "Virtual-1": {"status": "connected"}
             }),
         ):
-            self.assertTrue(comp.deactivate_in_compositor("cinnamon", {"Virtual-1": ("old",)}))
+            self.assertTrue(comp.deactivate_in_compositor(
+                "cinnamon", {"Virtual-1": ("old",)}, target_name="Virtual-1", target_connector_id=22
+            ))
         payload = interface.ApplyMonitorsConfig.call_args.args[2]
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0][5][0][0], "eDP-1")

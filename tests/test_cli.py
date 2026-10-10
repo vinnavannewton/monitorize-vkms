@@ -84,12 +84,14 @@ class TestCli(unittest.TestCase):
             "id": 7,
             "name": "Virtual-1",
             "connected": True,
-            "modes": [{"id": "42", "size": {"width": 2340, "height": 1080}}],
+            "enabled": True,
+            "currentModeId": "42",
+            "modes": [{"id": "42", "refreshRate": 60, "size": {"width": 2340, "height": 1080}}],
         }
         completed = MagicMock(returncode=0, stdout="", stderr="")
         with (
             patch("monitorize_vkms.compositor.shutil.which", return_value="/usr/bin/kscreen-doctor"),
-            patch("monitorize_vkms.compositor.kde_outputs", return_value=[output]),
+            patch("monitorize_vkms.compositor.kde_outputs", side_effect=[[output], [output]]),
             patch("monitorize_vkms.compositor.subprocess.run", return_value=completed) as run,
         ):
             ok, details, _message = kde_activate_vkms(
@@ -103,33 +105,39 @@ class TestCli(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(details["name"], "Virtual-1")
         run.assert_called_once_with(
-            ["kscreen-doctor", "output.7.enable", "output.7.mode.42"],
+            ["kscreen-doctor", "output.Virtual-1.enable", "output.Virtual-1.mode.42"],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
         )
 
+    def test_kde_activation_refuses_missing_requested_refresh_mode(self):
+        output = {
+            "id": 7,
+            "name": "Virtual-1",
+            "connected": True,
+            "enabled": False,
+            "modes": [{"id": "42", "refreshRate": 75, "size": {"width": 1920, "height": 1080}}],
+        }
+        with (
+            patch("monitorize_vkms.compositor.shutil.which", return_value="/usr/bin/kscreen-doctor"),
+            patch("monitorize_vkms.compositor.kde_outputs", return_value=[output]),
+            patch("monitorize_vkms.compositor.subprocess.run") as run,
+        ):
+            ok, _details, message = kde_activate_vkms(
+                set(), 1920, 1080, 60, expected_output_name="Virtual-1"
+            )
+        self.assertFalse(ok)
+        self.assertIn("refusing to enable it at another mode", message)
+        run.assert_not_called()
+
     def test_foreground_exit_destroys_display_once(self):
         args = SimpleNamespace(mode="1920x1080@60", json=True, foreground=True)
-        helper_result = {"success": True, "changed": True}
-        connector = {
-            "name": "Virtual-1",
-            "card": "card3",
-            "path": "/sys/class/drm/card3-Virtual-1",
-            "connector_id": 41,
-        }
+        helper_result = {"success": True, "created": True, "generation": "gen-1"}
 
         with (
-            patch("monitorize_vkms.cli.get_compositor_snapshot", return_value=("kde", set())),
-            patch("monitorize_vkms.cli.monitorize_drm_connectors", return_value={}),
             patch("monitorize_vkms.cli.helper_response", return_value=helper_result) as helper,
-            patch("monitorize_vkms.cli.wait_for_new_drm_connector", return_value=connector),
-            patch(
-                "monitorize_vkms.cli.activate_in_compositor",
-                return_value=(True, {"name": "Virtual-1"}, "ready"),
-            ),
-            patch("monitorize_vkms.cli.deactivate_in_compositor"),
             patch("monitorize_vkms.cli.signal.signal"),
             patch("monitorize_vkms.cli.select.select", return_value=([object()], [], [])),
             patch("monitorize_vkms.cli.sys.stdin", io.StringIO("")),
@@ -142,6 +150,7 @@ class TestCli(unittest.TestCase):
             [call.args[0] for call in helper.call_args_list],
             ["create-custom", "destroy"],
         )
+        self.assertEqual(helper.call_args_list[-1].kwargs, {"generation": "gen-1"})
 
 
 if __name__ == "__main__":

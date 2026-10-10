@@ -28,7 +28,15 @@ require_root() {
 }
 
 acquire_global_lock() {
-	exec 9>"$LOCK_PATH"
+	if [[ -L "$LOCK_PATH" ]]; then
+		die "Refusing symlinked lifecycle lock: ${LOCK_PATH}"
+	fi
+	if [[ ! -e "$LOCK_PATH" ]]; then
+		( set -o noclobber; : >"$LOCK_PATH" ) 2>/dev/null || true
+	fi
+	[[ -f "$LOCK_PATH" && -O "$LOCK_PATH" ]] || die "Lifecycle lock must be a root-owned regular file: ${LOCK_PATH}"
+	chmod 600 -- "$LOCK_PATH"
+	exec 9<>"$LOCK_PATH"
 	flock -n 9 || die "Another Monitorize VKMS installation or display operation is running"
 }
 

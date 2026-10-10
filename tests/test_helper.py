@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
+import contextlib
+import io
+import json
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -17,7 +22,15 @@ from monitorize_vkms.helper import (
     _configfs_root,
     _disconnect_connector,
     _enable_connector,
+    _lease_matches_request,
+    _parse_session_environment,
+    _validate_compositor_support,
+    _validate_edid_mode,
+    _acquire_lifecycle_lock,
+    _worker_main,
 )
+from monitorize_vkms.edid import generate_edid
+from monitorize_vkms.errors import CompositorError
 
 
 class TestInstalledHelperStartup(unittest.TestCase):
@@ -64,6 +77,61 @@ class TestConfigfsOwnership(unittest.TestCase):
             with patch("monitorize_vkms.helper._configfs_mounts", return_value=[mount]):
                 with self.assertRaisesRegex(VkmsHelperError, "Monitorize VKMS configfs is not registered"):
                     _configfs_root([])
+
+
+class TestLifecyclePreflight(unittest.TestCase):
+    def test_lease_is_bound_to_owner_boot_edid_mode_and_state(self):
+        lease = {"uid": 1000, "session": "3", "boot_id": "boot-a", "edid_sha256": "edid-a",
+                 "mode": [1920, 1080, 60], "state": "active"}
+        self.assertTrue(_lease_matches_request(lease, uid=1000, session="3", boot_id="boot-a",
+                                               edid_sha256="edid-a", mode=[1920, 1080, 60]))
+        for changes in ({"uid": 1001}, {"session": "4"}, {"boot_id": "boot-b"},
+                        {"edid_sha256": "edid-b"}, {"mode": [2560, 1440, 60]}, {"state": "pending"}):
+            with self.subTest(changes=changes):
+                altered = {**lease, **changes}
+                self.assertFalse(_lease_matches_request(altered, uid=1000, session="3", boot_id="boot-a",
+                                                        edid_sha256="edid-a", mode=[1920, 1080, 60]))
+
+    def test_session_environment_uses_nul_separators(self):
+        parsed = _parse_session_environment(
+            b"PATH=/bin\0DISPLAY=:0\0WAYLAND_DISPLAY=wayland-0\0UNTRUSTED=value\0"
+        )
+        self.assertEqual(parsed, {"DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0"})
+
+    def test_unvalidated_desktops_and_unknown_sessions_fail_before_connect(self):
+        for desktop in ("cosmic", "hyprland", "niri", "sway", "unknown"):
+            with self.subTest(desktop=desktop), self.assertRaises(VkmsHelperError):
+                _validate_compositor_support(desktop, {"WAYLAND_DISPLAY": "wayland-0"})
+        with self.assertRaisesRegex(VkmsHelperError, "unmanaged output"):
+            _validate_compositor_support(None, {"DISPLAY": ":0"})
+        _validate_compositor_support("kde", {"WAYLAND_DISPLAY": "wayland-0"})
+
+    def test_worker_treats_false_deactivation_as_failure(self):
+        request = {"action": "deactivate", "name": "Virtual-1", "connector_id": 7}
+        with patch("monitorize_vkms.helper.os.geteuid", return_value=1000), \
+             patch("monitorize_vkms.helper.sys.stdin", io.StringIO(json.dumps(request))), \
+             patch("monitorize_vkms.drm.monitorize_drm_connectors", return_value={
+                 "Virtual-1": {"status": "connected", "connector_id": 7}}), \
+             patch("monitorize_vkms.compositor.detect_compositor", return_value="kde"), \
+             patch("monitorize_vkms.compositor.deactivate_in_compositor", return_value=False), \
+             contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(CompositorError, "did not confirm deactivation"):
+                _worker_main()
+
+    def test_lifecycle_lock_rejects_concurrent_operation(self):
+        with TemporaryDirectory() as directory, \
+             patch("monitorize_vkms.helper.LIFECYCLE_LOCK", Path(directory) / "lifecycle.lock"), \
+             patch("monitorize_vkms.helper.os.geteuid", return_value=0), \
+             patch("monitorize_vkms.helper.os.fstat", return_value=SimpleNamespace(
+                 st_mode=stat.S_IFREG | 0o600, st_uid=0, st_nlink=1
+             )):
+            first = _acquire_lifecycle_lock()
+            try:
+                with self.assertRaisesRegex(VkmsHelperError, "Another Monitorize VKMS"):
+                    _acquire_lifecycle_lock()
+            finally:
+                import os
+                os.close(first)
 
 
 class TestPersistentConnectorHelper(unittest.TestCase):
@@ -128,6 +196,16 @@ class TestPersistentConnectorHelper(unittest.TestCase):
         with patch("monitorize_vkms.helper._read", side_effect=self._read):
             with self.assertRaisesRegex(VkmsHelperError, "Reinstall and reboot"):
                 _disconnect_connector(self.connector, [])
+
+    def test_custom_edid_preferred_timing_must_match_requested_mode(self):
+        edid = generate_edid(1920, 1080, 60)
+        _validate_edid_mode(edid, [1920, 1080, 60])
+        with self.assertRaisesRegex(VkmsHelperError, "does not match requested"):
+            _validate_edid_mode(edid, [2560, 1440, 60])
+
+    def test_helper_worker_is_started_with_isolated_python(self):
+        source = (Path(__file__).resolve().parent.parent / "monitorize_vkms" / "helper.py").read_text()
+        self.assertIn('sys.executable, "-I", str(Path(__file__).resolve()), "--worker"', source)
 
 
 if __name__ == "__main__":

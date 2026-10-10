@@ -72,6 +72,10 @@ def monitorize_drm_connectors(drm_root: Path | None = None) -> dict[str, dict]:
                         except (OSError, ValueError):
                             pass
                             
+                        if connector_name in connectors:
+                            raise MonitorizeVkmsError(
+                                f"Multiple Monitorize DRM cards expose {connector_name}; refusing ambiguous discovery."
+                            )
                         connectors[connector_name] = {
                             "name": connector_name,
                             "path": str(entry),
