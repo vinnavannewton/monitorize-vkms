@@ -20,22 +20,6 @@ It can be used as a **standalone CLI tool** or as the backend for [project-monit
 | Niri / Sway / wlroots | ✅             |
 | COSMIC                | ❌             |
 
-The helper refuses to connect a display for desktop sessions whose requested
-mode and removal lifecycle are not verified. Live removal on COSMIC and
-Hyprland remains disabled because output-manager acknowledgements do not prove
-that renderer teardown has completed. `monitorize-vkms doctor` reports create,
-remove, and service-manager support separately.
-
-These backends have lifecycle guards; this is not a guarantee for every distro,
-desktop version, or kernel 7.0+ build. Live testing on each target remains necessary.
-
-Display ownership is tied to the creating user, login session, boot, and DRM
-connector. Remove it from the same session. An identical repeated D-Bus create
-for a named display keeps its cleanup ownership intact. If activation or removal
-cannot be confirmed, the helper leaves the connector attached. Retry removal in
-the owning session; reboot to recover when that session or its output identity
-is no longer available.
-
 ---
 
 ## Standalone CLI Usage
@@ -43,7 +27,7 @@ is no longer available.
 After installing and rebooting once, you can manage virtual displays directly from your terminal:
 
 ```sh
-# Create a virtual display with custom resolution and refresh rate
+# Create upto two virtual displays with custom resolution and refresh rate
 monitorize-vkms create 2340x1080@60
 
 # Check active virtual displays
@@ -61,9 +45,7 @@ monitorize-vkms remove mon2
 monitorize-vkms remove
 ```
 
-`create` fills `mon1`, then `mon2`; a third create fails. The host D-Bus service
-`io.github.vinnavannewton.MonitorizeVkms1` accepts explicit display IDs for
-Flatpak retries. Upgrading an existing one-display setup requires a reboot.
+`create` fills `mon1`, then `mon2`; a third create fails.
 
 ---
 
@@ -71,13 +53,7 @@ Flatpak retries. Upgrading an existing one-display setup requires a reboot.
 
 Monitorize VKMS builds an out-of-tree kernel module with DKMS. Install build
 files matching your currently running kernel before running the installer.
-The source installer currently supports the listed systemd-based distro
-families and requires systemd-logind, `pkcheck`, Python D-Bus bindings, and
-PyGObject/GLib. NixOS and alternative init systems need a
-separate native packaging/service adapter; the installer fails before system
-changes when those environments are detected. Kernel API support is determined
-by compiling against the installed kernel headers, not by the kernel version
-string alone.
+Kernel API support is determined by compiling against the installed kernel headers, not by the kernel version string alone.
 The commands below are for the standard kernel in each distribution.
 
 ### Arch Linux
@@ -123,8 +99,15 @@ sudo dnf install -y git dkms gcc make "kernel-devel-$(uname -r)" python3 python3
 
 ### Ubuntu / Debian
 
+Update and reboot first so the kernel development files match the running kernel:
+
 ```bash
 sudo apt update
+sudo apt upgrade -y
+sudo reboot
+```
+
+```bash
 sudo apt install -y git dkms build-essential "linux-headers-$(uname -r)" python3 python3-dbus python3-gi pkexec mokutil
 ```
 
@@ -164,22 +147,22 @@ test -f "/lib/modules/$(uname -r)/build/Makefile" \
 git clone https://github.com/vinnavannewton/monitorize-vkms.git
 cd monitorize-vkms
 sudo ./install.sh
+```
+
+If errors stop there!, else continue to reboot.
+
+```sh
 sudo reboot
 ```
 
-The installer:
+After installing verify:
 
-1. Compiles a disposable compatibility preflight before modifying anything.
-2. Stages and builds `monitorize_vkms.ko` via DKMS without touching stock `vkms.ko`.
-3. Installs the persistent bootstrap service (`monitorize-vkms-bootstrap.service`).
-4. Installs the standalone CLI (`/usr/bin/monitorize-vkms`), helper (`/usr/libexec/monitorize-vkms/monitorize-vkms-helper`), and Polkit policy (`/usr/share/polkit-1/actions/io.github.vinnavannewton.monitorize-vkms.policy`).
+```sh
+cd scripts
+./verify-install.sh
+```
 
-Reboot once after installation to create the persistent DRM card.
-
-Upgrades snapshot the owned tools, configuration, DKMS records, and installed
-module files for rollback. A matching registered version can be built for a new
-kernel; changed module build inputs require a new package version. If rollback
-fails, the installer reports and retains the recovery snapshot directory.
+If everything is a pass, then your done!
 
 ---
 
