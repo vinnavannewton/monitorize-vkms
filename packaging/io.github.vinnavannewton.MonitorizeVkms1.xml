@@ -1,0 +1,21 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node name="/io/github/vinnavannewton/MonitorizeVkms1">
+  <interface name="io.github.vinnavannewton.MonitorizeVkms1">
+    <method name="GetCapabilities"><arg name="response_json" type="s" direction="out"/></method>
+    <method name="GetStatus"><arg name="response_json" type="s" direction="out"/></method>
+    <method name="CreateDisplay">
+      <arg name="display" type="s" direction="in"/>
+      <arg name="width" type="i" direction="in"/>
+      <arg name="height" type="i" direction="in"/>
+      <arg name="refresh" type="d" direction="in"/>
+      <arg name="response_json" type="s" direction="out"/>
+    </method>
+    <method name="DestroyDisplay">
+      <arg name="display" type="s" direction="in"/>
+      <arg name="generation" type="s" direction="in"/>
+      <arg name="response_json" type="s" direction="out"/>
+    </method>
+    <method name="DestroyAll"><arg name="response_json" type="s" direction="out"/></method>
+  </interface>
+</node>

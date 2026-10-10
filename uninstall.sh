@@ -15,6 +15,11 @@ readonly LOCK_PATH="/run/lock/monitorize-vkms.lock"
 readonly BOOTSTRAP_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-bootstrap"
 readonly BOOTSTRAP_UNIT_PATH="/etc/systemd/system/monitorize-vkms-bootstrap.service"
 readonly HELPER_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-helper"
+readonly DBUS_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service"
+readonly DBUS_UNIT_PATH="/etc/systemd/system/monitorize-vkms.service"
+readonly DBUS_ACTIVATION_PATH="/usr/share/dbus-1/system-services/io.github.vinnavannewton.MonitorizeVkms1.service"
+readonly DBUS_POLICY_PATH="/etc/dbus-1/system.d/io.github.vinnavannewton.MonitorizeVkms1.conf"
+readonly DBUS_INTERFACE_PATH="/usr/share/dbus-1/interfaces/io.github.vinnavannewton.MonitorizeVkms1.xml"
 readonly POLKIT_POLICY_PATH="/usr/share/polkit-1/actions/io.github.vinnavannewton.monitorize-vkms.policy"
 readonly CLI_PATH="/usr/bin/monitorize-vkms"
 readonly PYTHON_LIB_DIR="/usr/lib/monitorize-vkms"
@@ -144,7 +149,14 @@ remove_bootstrap_service() {
 }
 
 remove_cli_and_tools() {
-	rm -f -- "$CLI_PATH" "$POLKIT_POLICY_PATH" "$HELPER_PATH"
+	if command -v systemctl >/dev/null; then
+		systemctl stop monitorize-vkms.service >/dev/null 2>&1 || true
+	fi
+	rm -f -- "$CLI_PATH" "$POLKIT_POLICY_PATH" "$HELPER_PATH" "$DBUS_PATH" \
+		"$DBUS_UNIT_PATH" "$DBUS_ACTIVATION_PATH" "$DBUS_POLICY_PATH" "$DBUS_INTERFACE_PATH"
+	if command -v systemctl >/dev/null; then
+		systemctl daemon-reload || warn 'systemd daemon-reload failed'
+	fi
 	rm -rf -- "$PYTHON_LIB_DIR"
 	rmdir /usr/libexec/monitorize-vkms 2>/dev/null || true
 	log "Removed standalone CLI, helper, and Polkit policy"

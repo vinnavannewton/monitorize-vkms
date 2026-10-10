@@ -38,7 +38,7 @@ class LifecycleReviewTest(unittest.TestCase):
     def test_failed_compositor_removal_never_disconnects_or_discards_lease(self):
         lease = {"uid": 1000, "session": "3", "generation": "current", "desktop": "kde",
                  "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
-                 "connector": "Virtual-1", "connector_id": 7, "card": "card2"}
+                 "connector": "Virtual-1", "connector_id": 7, "card": "card2", "edid_sha256": "digest"}
         with patch.object(helper, "_require_polkit_root"), \
              patch.object(helper, "_configfs_root", return_value=Path("/fake")), \
              patch.object(helper, "_require_bootstrap", return_value=(Path("/fake/instance"), Path("/fake/connector"))), \
@@ -50,7 +50,8 @@ class LifecycleReviewTest(unittest.TestCase):
              patch.object(helper, "_read_lease", return_value=lease), \
              patch.object(helper.sys, "argv", ["helper", "destroy"]), \
              patch("monitorize_vkms.drm.monitorize_drm_connectors", return_value={
-                 "Virtual-1": {"name": "Virtual-1", "status": "connected", "connector_id": 7, "card": "card2"}}), \
+                 "Virtual-1": {"name": "Virtual-1", "status": "connected", "connector_id": 7, "card": "card2",
+                               "display": "mon1", "edid_sha256": "digest"}}), \
              patch.object(helper, "_run_worker", side_effect=helper.VkmsHelperError("not confirmed")), \
              patch.object(helper, "_disconnect_connector") as disconnect, \
              patch.object(helper, "_remove_lease") as remove:

@@ -35,9 +35,9 @@ class TestEdidGenerator(unittest.TestCase):
                 self.assertEqual(edid[126], 0)  # No extensions
 
                 # KDE uses this descriptor as the user-facing monitor model.
-                self.assertEqual(edid[77:90].rstrip(b" \n"), b"Virtual-1")
+                self.assertEqual(edid[77:90].rstrip(b" \n"), b"mon1")
                 # Keep KDE's vendor field empty so the display label is exactly
-                # Virtual-1 instead of the synthetic "MON Virtual-1".
+                # Keep KDE's model label free of a synthetic vendor prefix.
                 self.assertEqual(edid[108:113], b"\x00\x00\x00\xfe\x00")
                 self.assertEqual(edid[113:126].strip(), b"")
 

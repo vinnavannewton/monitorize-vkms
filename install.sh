@@ -23,6 +23,16 @@ readonly BOOTSTRAP_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-bootstrap"
 readonly BOOTSTRAP_UNIT_PATH="/etc/systemd/system/monitorize-vkms-bootstrap.service"
 readonly HELPER_SOURCE="${REPOSITORY_DIR}/monitorize_vkms/helper.py"
 readonly HELPER_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-helper"
+readonly DBUS_SOURCE="${REPOSITORY_DIR}/monitorize_vkms/dbus_service.py"
+readonly DBUS_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service"
+readonly DBUS_UNIT_SOURCE="${REPOSITORY_DIR}/systemd/monitorize-vkms.service"
+readonly DBUS_UNIT_PATH="/etc/systemd/system/monitorize-vkms.service"
+readonly DBUS_ACTIVATION_SOURCE="${REPOSITORY_DIR}/packaging/io.github.vinnavannewton.MonitorizeVkms1.service"
+readonly DBUS_ACTIVATION_PATH="/usr/share/dbus-1/system-services/io.github.vinnavannewton.MonitorizeVkms1.service"
+readonly DBUS_POLICY_SOURCE="${REPOSITORY_DIR}/packaging/io.github.vinnavannewton.MonitorizeVkms1.conf"
+readonly DBUS_POLICY_PATH="/etc/dbus-1/system.d/io.github.vinnavannewton.MonitorizeVkms1.conf"
+readonly DBUS_INTERFACE_SOURCE="${REPOSITORY_DIR}/packaging/io.github.vinnavannewton.MonitorizeVkms1.xml"
+readonly DBUS_INTERFACE_PATH="/usr/share/dbus-1/interfaces/io.github.vinnavannewton.MonitorizeVkms1.xml"
 readonly POLKIT_POLICY_SOURCE="${REPOSITORY_DIR}/packaging/io.github.vinnavannewton.monitorize-vkms.policy"
 readonly POLKIT_POLICY_PATH="/usr/share/polkit-1/actions/io.github.vinnavannewton.monitorize-vkms.policy"
 readonly CLI_SOURCE="${REPOSITORY_DIR}/scripts/monitorize-vkms-cli"
@@ -93,14 +103,14 @@ print_dependency_help() {
 	printf '[Monitorize VKMS] The installer will never invoke a package manager or install a kernel.\n' >&2
 	case "$DISTRO_FAMILY" in
 		fedora)
-			printf '[Monitorize VKMS] Fedora: sudo dnf install dkms gcc make kernel-devel-%s python3 polkit\n' "$KERNEL" >&2
+			printf '[Monitorize VKMS] Fedora: sudo dnf install dkms gcc make kernel-devel-%s python3 python3-dbus python3-gobject polkit\n' "$KERNEL" >&2
 			;;
 		debian)
-			printf '[Monitorize VKMS] Debian/Ubuntu: sudo apt install dkms build-essential linux-headers-%s python3 pkexec\n' "$KERNEL" >&2
+			printf '[Monitorize VKMS] Debian/Ubuntu: sudo apt install dkms build-essential linux-headers-%s python3 python3-dbus python3-gi pkexec\n' "$KERNEL" >&2
 			;;
 		arch)
 			printf '[Monitorize VKMS] Arch: fully upgrade and reboot first.\n' >&2
-			printf '[Monitorize VKMS] Install: sudo pacman -S --needed dkms base-devel python polkit <matching-kernel-headers>\n' >&2
+			printf '[Monitorize VKMS] Install: sudo pacman -S --needed dkms base-devel python python-dbus python-gobject polkit <matching-kernel-headers>\n' >&2
 			printf '[Monitorize VKMS] Examples: linux-headers, linux-lts-headers, linux-zen-headers, linux-hardened-headers\n' >&2
 			;;
 		suse)
@@ -113,9 +123,10 @@ check_prerequisites() {
 	[[ -d /run/systemd/system ]] || die "This source installer requires a running systemd system and systemd-logind"
 	local missing=()
 	local command
-	for command in dkms make gcc install modinfo depmod find sort flock nm grep cmp mktemp chmod mv chown systemctl loginctl setpriv modprobe readlink tr mkdir ln python3 pkexec; do
+	for command in dkms make gcc install modinfo depmod find sort flock nm grep cmp mktemp chmod mv chown systemctl loginctl setpriv modprobe readlink tr mkdir ln python3 pkexec pkcheck; do
 		command -v "$command" >/dev/null || missing+=("$command")
 	done
+	python3 -I -c 'import dbus; import gi; gi.require_version("GLib", "2.0"); from gi.repository import GLib' >/dev/null 2>&1 || missing+=("python3-dbus and python3-gobject/gi")
 	if [[ -d /sys/firmware/efi ]] && ! command -v mokutil >/dev/null; then
 		missing+=("mokutil (required on EFI systems)")
 	fi
@@ -400,6 +411,12 @@ install_bootstrap_service() {
 install_cli_and_tools() {
 	log "Installing standalone CLI, helper, and Polkit policy"
 	install -D -o root -g root -m 0755 "$HELPER_SOURCE" "$HELPER_PATH"
+	install -D -o root -g root -m 0755 "$DBUS_SOURCE" "$DBUS_PATH"
+	install -D -o root -g root -m 0644 "$DBUS_UNIT_SOURCE" "$DBUS_UNIT_PATH"
+	install -D -o root -g root -m 0644 "$DBUS_ACTIVATION_SOURCE" "$DBUS_ACTIVATION_PATH"
+	install -D -o root -g root -m 0644 "$DBUS_POLICY_SOURCE" "$DBUS_POLICY_PATH"
+	install -D -o root -g root -m 0644 "$DBUS_INTERFACE_SOURCE" "$DBUS_INTERFACE_PATH"
+	systemctl daemon-reload
 	if [[ -d "/usr/share/polkit-1/actions" ]]; then
 		install -D -o root -g root -m 0644 "$POLKIT_POLICY_SOURCE" "$POLKIT_POLICY_PATH"
 		log "Installed Polkit policy: ${POLKIT_POLICY_PATH}"
@@ -435,7 +452,8 @@ backup_one_target() {
 backup_install_targets() {
 	local target version module_file module_directory target_kernel
 	for target in "$MODPROBE_CONFIG" "$CONFIG_BACKUP" "$BOOTSTRAP_PATH" "$BOOTSTRAP_UNIT_PATH" \
-		"$HELPER_PATH" "$POLKIT_POLICY_PATH" "$CLI_PATH" "$PYTHON_LIB_DIR" "$SOURCE_DIR" \
+		"$HELPER_PATH" "$DBUS_PATH" "$DBUS_UNIT_PATH" "$DBUS_ACTIVATION_PATH" "$DBUS_POLICY_PATH" "$DBUS_INTERFACE_PATH" \
+		"$POLKIT_POLICY_PATH" "$CLI_PATH" "$PYTHON_LIB_DIR" "$SOURCE_DIR" \
 		"/var/lib/dkms/${PACKAGE_NAME}"; do
 		backup_one_target "$target"
 	done

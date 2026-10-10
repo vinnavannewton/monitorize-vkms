@@ -10,15 +10,15 @@ It can be used as a **standalone CLI tool** or as the backend for [Monitorize](h
 
 ## Supported desktops
 
-| Desktop Environments | Compatibility |
-| -------------------- |:-------------:|
-| KDE Plasma           | ✅             |
-| GNOME                | ✅             |
-| Cinnamon X11         | ✅             |
-| Headless DRM         | ✅             |
-| Hyprland             | ❌             |
-| Niri / Sway / wlroots| ❌             |
-| COSMIC               | ❌             |
+| Desktop Environments  | Compatibility |
+| --------------------- |:-------------:|
+| KDE Plasma            | ✅             |
+| GNOME                 | ✅             |
+| Cinnamon X11          | ✅             |
+| Headless DRM          | ✅             |
+| Hyprland              | ❌             |
+| Niri / Sway / wlroots | ✅             |
+| COSMIC                | ❌             |
 
 The helper refuses to connect a display for desktop sessions whose requested
 mode and removal lifecycle are not verified. Live removal on COSMIC and
@@ -30,8 +30,8 @@ These backends have lifecycle guards; this is not a guarantee for every distro,
 desktop version, or kernel 7.0+ build. Live testing on each target remains necessary.
 
 Display ownership is tied to the creating user, login session, boot, and DRM
-connector. Remove it from the same session. An identical repeated create leaves
-the existing display and its cleanup ownership intact. If activation or removal
+connector. Remove it from the same session. An identical repeated D-Bus create
+for a named display keeps its cleanup ownership intact. If activation or removal
 cannot be confirmed, the helper leaves the connector attached. Retry removal in
 the owning session; reboot to recover when that session or its output identity
 is no longer available.
@@ -55,9 +55,15 @@ monitorize-vkms status
 # Diagnose configuration and environment health
 monitorize-vkms doctor
 
-# Remove the virtual display
+# Remove one display, or omit its ID to remove both owned displays
+monitorize-vkms remove mon1
+monitorize-vkms remove mon2
 monitorize-vkms remove
 ```
+
+`create` fills `mon1`, then `mon2`; a third create fails. The host D-Bus service
+`io.github.vinnavannewton.MonitorizeVkms1` accepts explicit display IDs for
+Flatpak retries. Upgrading an existing one-display setup requires a reboot.
 
 ---
 
@@ -66,7 +72,8 @@ monitorize-vkms remove
 Monitorize VKMS builds an out-of-tree kernel module with DKMS. Install build
 files matching your currently running kernel before running the installer.
 The source installer currently supports the listed systemd-based distro
-families and requires systemd-logind. NixOS and alternative init systems need a
+families and requires systemd-logind, `pkcheck`, Python D-Bus bindings, and
+PyGObject/GLib. NixOS and alternative init systems need a
 separate native packaging/service adapter; the installer fails before system
 changes when those environments are detected. Kernel API support is determined
 by compiling against the installed kernel headers, not by the kernel version
@@ -86,7 +93,7 @@ sudo reboot
 After reboot, for the standard `linux` kernel:
 
 ```bash
-sudo pacman -S --needed git dkms base-devel linux-headers python polkit mokutil
+sudo pacman -S --needed git dkms base-devel linux-headers python python-dbus python-gobject polkit mokutil
 ```
 
 Use the header package for your kernel instead of `linux-headers` when needed:
@@ -111,14 +118,14 @@ sudo reboot
 ```
 
 ```bash
-sudo dnf install -y git dkms gcc make "kernel-devel-$(uname -r)" python3 polkit mokutil
+sudo dnf install -y git dkms gcc make "kernel-devel-$(uname -r)" python3 python3-dbus python3-gobject polkit mokutil
 ```
 
 ### Ubuntu / Debian
 
 ```bash
 sudo apt update
-sudo apt install -y git dkms build-essential "linux-headers-$(uname -r)" python3 pkexec mokutil
+sudo apt install -y git dkms build-essential "linux-headers-$(uname -r)" python3 python3-dbus python3-gi pkexec mokutil
 ```
 
 ### openSUSE Tumbleweed

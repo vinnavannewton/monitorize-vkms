@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import re
 import time
 from pathlib import Path
 from typing import Callable, Any
 
 from monitorize_vkms.errors import MonitorizeVkmsError
+from monitorize_vkms.edid import display_from_edid
 
 DRM_DISCOVERY_TIMEOUT = 5.0
 POLL_INTERVAL = 0.1
@@ -71,6 +73,15 @@ def monitorize_drm_connectors(drm_root: Path | None = None) -> dict[str, dict]:
                             )
                         except (OSError, ValueError):
                             pass
+
+                        try:
+                            with (entry / "edid").open("rb") as stream:
+                                edid = stream.read(128)
+                            display = display_from_edid(edid)
+                            edid_sha256 = hashlib.sha256(edid).hexdigest() if display else None
+                        except OSError:
+                            display = None
+                            edid_sha256 = None
                             
                         if connector_name in connectors:
                             raise MonitorizeVkmsError(
@@ -83,6 +94,8 @@ def monitorize_drm_connectors(drm_root: Path | None = None) -> dict[str, dict]:
                             "status": status,
                             "modes": modes,
                             "connector_id": connector_id,
+                            "display": display,
+                            "edid_sha256": edid_sha256,
                         }
                 except OSError:
                     pass

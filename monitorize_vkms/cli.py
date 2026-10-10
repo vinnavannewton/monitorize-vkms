@@ -52,7 +52,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         print(f"Creating virtual display {width}x{height}@{refresh:g}Hz...")
 
     try:
-        edid = generate_edid(width, height, refresh)
+        generate_edid(width, height, refresh)
     except EdidError as exc:
         if args.json:
             return _json_error(str(exc), "edid_error")
@@ -60,7 +60,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        helper_res = helper_response("create-custom", edid=edid, mode=(width, height, refresh))
+        helper_res = helper_response("create", mode=(width, height, refresh), slot="auto")
     except PolkitDenied as exc:
         if args.json:
             return _json_error(str(exc), "polkit_denied")
@@ -89,6 +89,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         "compositor_details": comp_details,
         "status": "active",
         "created": helper_res.get("created", True),
+        "display": helper_res.get("slot", "mon1"),
     }
 
     if args.json and (not args.foreground or not helper_res.get("created", True)):
@@ -96,6 +97,7 @@ def cmd_create(args: argparse.Namespace) -> int:
 
     if not args.json:
         print(f"Virtual display created successfully!")
+        print(f"  Display   : {result['display']}")
         print(f"  Connector : {result['drm_card']}-{result['drm_connector']}")
         print(f"  Mode      : {width}x{height}@{refresh:g}Hz")
         print(f"  Compositor: {desktop or 'None (DRM-only)'}")
@@ -120,7 +122,7 @@ def cmd_create(args: argparse.Namespace) -> int:
             if not args.json:
                 print("\nCleaning up virtual display...")
             try:
-                helper_response("destroy", generation=helper_res.get("generation"))
+                helper_response("destroy", generation=helper_res.get("generation"), slot=result["display"])
             except Exception as exc:
                 print(f"VKMS disconnect failed: {exc}", file=sys.stderr)
                 return False
@@ -151,7 +153,7 @@ def cmd_create(args: argparse.Namespace) -> int:
 
 def cmd_remove(args: argparse.Namespace) -> int:
     try:
-        helper_res = helper_response("destroy")
+        helper_res = helper_response("destroy" if args.display else "destroy-all", slot=args.display)
     except PolkitDenied as exc:
         if args.json:
             return _json_error(str(exc), "polkit_denied")
@@ -165,27 +167,35 @@ def cmd_remove(args: argparse.Namespace) -> int:
 
     changed = helper_res.get("changed", False)
     data = {
-        "success": True,
+        "success": helper_res.get("success", True),
         "removed": changed,
-        "message": "Virtual display removed." if changed else "No active virtual display was found.",
+        "results": helper_res.get("results", {}),
+        "message": ("Some displays were removed; others need attention."
+                    if not helper_res.get("success", True) and changed else
+                    "Virtual display removed." if changed else
+                    "No active virtual display was found."),
     }
     if args.json:
-        return _json_out(data)
+        return _json_out(data, 0 if data["success"] else 1)
 
     print(data["message"])
-    return 0
+    for slot, outcome in data["results"].items():
+        if "error" in outcome:
+            print(f"{slot}: {outcome['error']}", file=sys.stderr)
+    return 0 if data["success"] else 1
 
 
 def cmd_list(args: argparse.Namespace) -> int:
     connectors = monitorize_drm_connectors()
     card = find_monitorize_card()
     card_name = card.name if card else "None"
+    labelled = list(connectors.values())
 
     if args.json:
         return _json_out({
             "success": True,
             "card": card_name,
-            "connectors": list(connectors.values()),
+            "connectors": labelled,
         })
 
     if not connectors:
@@ -193,8 +203,8 @@ def cmd_list(args: argparse.Namespace) -> int:
         return 0
 
     print(f"Monitorize VKMS Displays (Card: {card_name}):")
-    for name, info in connectors.items():
-        print(f"  • {info['card']}-{name} [{info['status']}]")
+    for info in labelled:
+        print(f"  • {info['display'] or 'unknown'} ({info['card']}-{info['name']}) [{info['status']}]")
         modes_str = ", ".join(info["modes"][:5])
         if len(info["modes"]) > 5:
             modes_str += f" (+{len(info['modes']) - 5} more)"
@@ -228,6 +238,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         if (configfs_dev / "connectors/connector0/edid_enabled").is_file()
         else False
     )
+    second_path = configfs_dev / "connectors/connector1"
+    second_enabled = (second_path / "enabled").is_file() and (second_path / "enabled").read_text().strip() == "1"
+    second_connected = (second_path / "status").is_file() and (second_path / "status").read_text().strip() == "1"
     card = find_monitorize_card()
     connectors = monitorize_drm_connectors()
     desktop = detect_compositor()
@@ -246,6 +259,9 @@ def cmd_status(args: argparse.Namespace) -> int:
             "connector0_registered": connector_enabled,
             "connector0_connected": connector_connected,
             "connector0_edid_enabled": edid_enabled,
+            "connector1_enabled": second_enabled,
+            "connector1_registered": second_enabled,
+            "connector1_connected": second_connected,
         },
         "drm": {
             "card": card.name if card else None,
@@ -262,6 +278,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"  Kernel Module   : {'Loaded' if module_loaded else 'NOT loaded'}")
     print(f"  ConfigFS Device : {'Enabled' if device_enabled else 'Disabled / Missing'}")
     print(f"  Connector0      : {'Registered' if connector_enabled else 'NOT registered'}")
+    print(f"  Connector1      : {'Registered' if second_enabled else 'NOT registered'}")
     print(f"  Display State   : {'Connected' if connector_connected else 'Disconnected (ready)'}")
     print(f"  Custom EDID     : {'Enabled' if edid_enabled else 'Disabled'}")
     print(f"  DRM Card        : {card.name if card else 'None'}")
@@ -313,6 +330,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         and (instance / "enabled").read_text().strip() == "1"
         and (instance / "connectors/connector0/enabled").is_file()
         and (instance / "connectors/connector0/enabled").read_text().strip() == "1"
+        and (instance / "connectors/connector1/enabled").is_file()
+        and (instance / "connectors/connector1/enabled").read_text().strip() == "1"
     )
     check(
         "Persistent VKMS topology bootstrapped",
@@ -323,11 +342,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "Reinstall monitorize-vkms and reboot so KWin discovers the complete KMS card.",
     )
 
-    # 5. Connector0 properties
-    conn0 = instance / "connectors/connector0"
-    edid_ok = (conn0 / "edid").is_file() and (conn0 / "edid_enabled").is_file()
+    # 5. Both registered connectors need per-display EDID support.
+    edid_ok = all((instance / f"connectors/connector{index}/edid").is_file()
+                  and (instance / f"connectors/connector{index}/edid_enabled").is_file()
+                  for index in (0, 1))
     check(
-        "Connector0 custom EDID attributes supported",
+        "Both connectors expose custom EDID attributes",
         edid_ok,
         "edid and edid_enabled files present in configfs" if edid_ok else "Missing custom EDID attributes",
         "Module does not support custom EDID. Ensure monitorize-vkms 0.2.1+ is installed.",
@@ -467,8 +487,10 @@ def main(args: list[str] | None = None) -> int:
 
     # remove
     p_remove = subparsers.add_parser(
-        "remove", help="Remove the active virtual display"
+        "remove", help="Remove mon1, mon2, or both owned virtual displays"
     )
+    p_remove.add_argument("display", nargs="?", choices=("mon1", "mon2"),
+                          help="Display to remove; omit to remove both")
     p_remove.add_argument(
         "--json",
         action="store_true",

@@ -57,17 +57,25 @@ for candidate in /sys/kernel/config/monitorize-vkms /config/monitorize-vkms; do
 done
 if [[ -n "$configfs_root" ]]; then
 	pass "VKMS configfs is registered at ${configfs_root}"
-	connector="$(find "$configfs_root" -mindepth 3 -maxdepth 3 -type d -path '*/connectors/*' -print -quit 2>/dev/null || true)"
-	if [[ -n "$connector" ]]; then
-		[[ -e "${connector}/edid" && -e "${connector}/edid_enabled" ]] &&
-			pass "Connector exposes custom EDID attributes" ||
-			fail "Connector is missing custom EDID attributes: ${connector}"
-	else
-		info "No connector exists yet; EDID attributes will be checked when Monitorize creates a display"
-	fi
+	for index in 0 1; do
+		connector="${configfs_root}/monitorize/connectors/connector${index}"
+		[[ -e "${connector}/edid" && -e "${connector}/edid_enabled" && -e "${connector}/status" ]] &&
+			pass "Connector${index} exposes custom EDID and status attributes" ||
+			fail "Connector${index} is missing attributes: ${connector}"
+	done
 else
 	fail "VKMS configfs is not registered"
 fi
+
+for service_file in \
+	/usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service \
+	/etc/systemd/system/monitorize-vkms.service \
+	/usr/share/dbus-1/system-services/io.github.vinnavannewton.MonitorizeVkms1.service \
+	/usr/share/dbus-1/interfaces/io.github.vinnavannewton.MonitorizeVkms1.xml \
+	/etc/dbus-1/system.d/io.github.vinnavannewton.MonitorizeVkms1.conf; do
+	[[ -f "$service_file" ]] && pass "Service component exists: ${service_file}" ||
+		fail "Service component is missing: ${service_file}"
+done
 
 if command -v dkms >/dev/null; then
 	status="$(dkms status -m "$PACKAGE_NAME" -k "$KERNEL" 2>/dev/null || true)"

@@ -148,9 +148,9 @@ class TestCli(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(
             [call.args[0] for call in helper.call_args_list],
-            ["create-custom", "destroy"],
+            ["create", "destroy"],
         )
-        self.assertEqual(helper.call_args_list[-1].kwargs, {"generation": "gen-1"})
+        self.assertEqual(helper.call_args_list[-1].kwargs, {"generation": "gen-1", "slot": "mon1"})
 
 
 if __name__ == "__main__":
