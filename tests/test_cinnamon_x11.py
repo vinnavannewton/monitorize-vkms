@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from monitorize_vkms import cli, compositor
-from monitorize_vkms.errors import CompositorError
+from monitorize_vkms.errors import CompositorError, HelperError
 
 
 def output_state(
@@ -206,17 +206,12 @@ class CinnamonX11Test(unittest.TestCase):
     def test_snapshot_failure_is_reported_without_creating_connector(self):
         args = SimpleNamespace(mode="2340x1080@60", json=False, foreground=False)
         with (
-            patch.object(
-                cli,
-                "get_compositor_snapshot",
-                side_effect=CompositorError("xrandr unavailable"),
-            ),
-            patch.object(cli, "helper_response") as helper,
+            patch.object(cli, "helper_response", side_effect=HelperError("xrandr unavailable")) as helper,
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()) as error,
         ):
             self.assertEqual(cli.cmd_create(args), 1)
-        helper.assert_not_called()
+        helper.assert_called_once()
         self.assertIn("xrandr unavailable", error.getvalue())
 
 

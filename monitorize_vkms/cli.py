@@ -14,23 +14,15 @@ from typing import Any
 
 from monitorize_vkms import __version__
 from monitorize_vkms.configfs import CONFIGFS_INSTANCE
-from monitorize_vkms.compositor import (
-    activate_in_compositor,
-    deactivate_in_compositor,
-    detect_compositor,
-    get_compositor_snapshot,
-)
+from monitorize_vkms.compositor import detect_compositor
 from monitorize_vkms.drm import (
     find_monitorize_card,
     monitorize_drm_connectors,
-    wait_for_new_drm_connector,
 )
 from monitorize_vkms.edid import generate_edid
 from monitorize_vkms.errors import (
-    CompositorError,
     EdidError,
     HelperError,
-    MonitorizeVkmsError,
     PolkitDenied,
 )
 from monitorize_vkms.helper_client import HELPER_PATH, helper_response
@@ -60,15 +52,6 @@ def cmd_create(args: argparse.Namespace) -> int:
         print(f"Creating virtual display {width}x{height}@{refresh:g}Hz...")
 
     try:
-        desktop, before_comp = get_compositor_snapshot()
-    except CompositorError as exc:
-        if args.json:
-            return _json_error(str(exc), "compositor_error")
-        print(f"Compositor Error: {exc}", file=sys.stderr)
-        return 1
-    drm_before = set(monitorize_drm_connectors())
-
-    try:
         edid = generate_edid(width, height, refresh)
     except EdidError as exc:
         if args.json:
@@ -77,7 +60,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        helper_res = helper_response("create-custom", edid=edid)
+        helper_res = helper_response("create-custom", edid=edid, mode=(width, height, refresh))
     except PolkitDenied as exc:
         if args.json:
             return _json_error(str(exc), "polkit_denied")
@@ -89,67 +72,37 @@ def cmd_create(args: argparse.Namespace) -> int:
         print(f"Helper Error: {exc}", file=sys.stderr)
         return 1
 
-    # Wait for DRM connector in sysfs
-    def _drm_log(msg: str):
-        if not args.json:
-            print(f"  [DRM] {msg}")
-
-    try:
-        drm_conn = wait_for_new_drm_connector(
-            drm_before, width, height, log=_drm_log, allow_existing=True
-        )
-    except MonitorizeVkmsError as exc:
-        if args.json:
-            return _json_error(str(exc), "drm_error")
-        print(f"DRM Error: {exc}", file=sys.stderr)
-        return 1
-
-    # Activate in compositor if present
-    comp_details = {}
+    drm_conn = monitorize_drm_connectors().get(helper_res.get("connector"), {})
+    desktop = helper_res.get("compositor")
+    comp_details = helper_res.get("compositor_details", {})
     comp_msg = ""
-    try:
-        ok, comp_details, comp_msg = activate_in_compositor(
-            desktop,
-            before_comp,
-            width,
-            height,
-            refresh,
-            expected_output_name=drm_conn["name"],
-            expected_connector_id=drm_conn.get("connector_id"),
-        )
-        if not ok:
-            raise CompositorError(comp_msg)
-    except CompositorError as exc:
-        if args.json:
-            return _json_error(str(exc), "compositor_error")
-        print(f"Compositor Error: {exc}", file=sys.stderr)
-        return 1
 
     result = {
         "success": True,
         "width": width,
         "height": height,
         "refresh_rate": refresh,
-        "drm_connector": drm_conn["name"],
-        "drm_card": drm_conn["card"],
-        "drm_path": drm_conn["path"],
+        "drm_connector": helper_res.get("connector", drm_conn.get("name", "unknown")),
+        "drm_card": helper_res.get("card", drm_conn.get("card", "unknown")),
+        "drm_path": drm_conn.get("path", ""),
         "compositor": desktop,
         "compositor_details": comp_details,
         "status": "active",
+        "created": helper_res.get("created", True),
     }
 
-    if args.json and not args.foreground:
+    if args.json and (not args.foreground or not helper_res.get("created", True)):
         return _json_out(result)
 
     if not args.json:
         print(f"Virtual display created successfully!")
-        print(f"  Connector : {drm_conn['card']}-{drm_conn['name']}")
+        print(f"  Connector : {result['drm_card']}-{result['drm_connector']}")
         print(f"  Mode      : {width}x{height}@{refresh:g}Hz")
         print(f"  Compositor: {desktop or 'None (DRM-only)'}")
         if comp_msg:
             print(f"  Status    : {comp_msg}")
 
-    if args.foreground:
+    if args.foreground and helper_res.get("created", True):
         if args.json:
             # Print initial json line then block
             print(json.dumps(result))
@@ -167,12 +120,7 @@ def cmd_create(args: argparse.Namespace) -> int:
             if not args.json:
                 print("\nCleaning up virtual display...")
             try:
-                deactivate_in_compositor(desktop, before_comp)
-            except Exception as exc:
-                print(f"Cleanup refused; VKMS remains connected: {exc}", file=sys.stderr)
-                return False
-            try:
-                helper_response("destroy")
+                helper_response("destroy", generation=helper_res.get("generation"))
             except Exception as exc:
                 print(f"VKMS disconnect failed: {exc}", file=sys.stderr)
                 return False
@@ -202,24 +150,6 @@ def cmd_create(args: argparse.Namespace) -> int:
 
 
 def cmd_remove(args: argparse.Namespace) -> int:
-    try:
-        desktop, before_comp = get_compositor_snapshot()
-    except CompositorError as exc:
-        message = f"Removal refused; VKMS remains connected: {exc}"
-        if args.json:
-            return _json_error(message, "compositor_error")
-        print(message, file=sys.stderr)
-        return 1
-
-    try:
-        deactivate_in_compositor(desktop, before_comp)
-    except Exception as exc:
-        message = f"Removal refused; VKMS remains connected: {exc}"
-        if args.json:
-            return _json_error(message, "compositor_error")
-        print(message, file=sys.stderr)
-        return 1
-
     try:
         helper_res = helper_response("destroy")
     except PolkitDenied as exc:
@@ -443,11 +373,40 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # 10. Compositor
     desktop = detect_compositor()
+    headless_drm = (desktop is None and not os.environ.get("WAYLAND_DISPLAY")
+                    and not os.environ.get("DISPLAY")
+                    and os.environ.get("XDG_SESSION_TYPE") not in {"wayland", "x11"})
     check(
         "Desktop compositor detected",
-        desktop is not None,
-        f"Detected: {desktop}" if desktop else "No supported compositor detected (running headless or unknown session)",
-        "Use a supported GNOME, KDE Plasma, Cinnamon/X11, or wlroots session.",
+        desktop is not None or headless_drm,
+        f"Detected: {desktop}" if desktop else ("No compositor; DRM-only mode" if headless_drm else "Unknown display session"),
+        "Use GNOME, KDE Plasma, Cinnamon/X11, or a headless DRM session.",
+    )
+
+    create_backends = {"gnome", "kde", "cinnamon"}
+    create_supported = (desktop in create_backends or headless_drm) and (
+        desktop != "cinnamon" or os.environ.get("XDG_SESSION_TYPE") == "x11"
+    )
+    check(
+        "Create backend has verified mode selection",
+        create_supported,
+        f"Detected backend: {desktop or 'headless DRM'}",
+        "Use GNOME, KDE Plasma, Cinnamon/X11, or a headless DRM session; other compositor adapters are disabled until mode verification is implemented.",
+    )
+    remove_supported = create_supported
+    check(
+        "Live removal backend is enabled",
+        remove_supported,
+        f"Live removal backend: {desktop or 'headless DRM'}",
+        "Live removal is disabled for COSMIC, Hyprland, and unvalidated compositors because protocol acknowledgement does not prove renderer teardown.",
+    )
+    has_systemd = bool(shutil.which("loginctl") and shutil.which("systemctl")
+                       and Path("/run/systemd/system").is_dir())
+    check(
+        "systemd/logind lifecycle support",
+        has_systemd,
+        "loginctl and systemctl are available" if has_systemd else "This source installer requires systemd and systemd-logind",
+        "Use a systemd-based distribution or install through a separately maintained service-manager adapter.",
     )
 
     all_passed = all(c["status"] == "PASS" for c in checks)

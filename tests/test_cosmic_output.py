@@ -1,11 +1,12 @@
 import contextlib
 import io
+import json
 import subprocess
 import unittest
 from unittest.mock import patch
 
 from monitorize_vkms import cli, compositor, cosmic_output
-from monitorize_vkms.errors import CompositorError
+from monitorize_vkms.errors import CompositorError, HelperError
 
 
 def state(virtual=True, other=True):
@@ -74,13 +75,12 @@ class CosmicOutputTests(unittest.TestCase):
             with self.assertRaisesRegex(CompositorError, "Timed out confirming"):
                 cosmic_output.set_enabled("Virtual-2", True)
 
-    def test_removal_targets_only_monitorize_output(self):
+    def test_live_removal_is_blocked_until_renderer_teardown_is_verifiable(self):
         with patch.dict(compositor.os.environ, {"WAYLAND_DISPLAY": "wayland-0"}, clear=True), \
-             patch("monitorize_vkms.drm.monitorize_drm_connectors", return_value={
-                 "Virtual-2": {"status": "connected"}}), \
              patch.object(cosmic_output, "set_enabled", return_value=True) as change:
-            self.assertTrue(compositor.deactivate_in_compositor("cosmic", None))
-        change.assert_called_once_with("Virtual-2", False)
+            with self.assertRaisesRegex(CompositorError, "renderer teardown"):
+                compositor.deactivate_in_compositor("cosmic", None, target_name="Virtual-2")
+        change.assert_not_called()
 
     def test_ambiguous_removal_refused(self):
         with patch.dict(compositor.os.environ, {"WAYLAND_DISPLAY": "wayland-0"}, clear=True), \
@@ -88,8 +88,8 @@ class CosmicOutputTests(unittest.TestCase):
                  "Virtual-1": {"status": "connected"},
                  "Virtual-2": {"status": "connected"}}), \
              patch.object(cosmic_output, "set_enabled") as change:
-            with self.assertRaisesRegex(CompositorError, "ambiguous"):
-                compositor.deactivate_in_compositor("cosmic", None)
+            with self.assertRaisesRegex(CompositorError, "renderer teardown"):
+                compositor.deactivate_in_compositor("cosmic", None, target_name="Virtual-1")
         change.assert_not_called()
 
     def test_disable_requires_fresh_confirmation(self):
@@ -107,14 +107,11 @@ class CosmicOutputTests(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
 
     def test_removal_failure_preserves_kernel_connector(self):
-        with patch.object(cli, "get_compositor_snapshot", return_value=("cosmic", None)), \
-             patch("monitorize_vkms.drm.monitorize_drm_connectors", return_value={
-                 "Virtual-2": {"status": "connected"}}), \
-             patch.object(cosmic_output, "set_enabled", side_effect=CompositorError("not confirmed")), \
-             patch.object(cli, "helper_response") as helper, \
-             contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(cli, "helper_response", side_effect=HelperError("renderer teardown is unverified")) as helper, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(["remove", "--json"]), 1)
-        helper.assert_not_called()
+        helper.assert_called_once_with("destroy")
+        self.assertIn("unverified", json.loads(output.getvalue())["message"])
 
     def test_duplicate_or_missing_head_fails_closed(self):
         with self.assertRaisesRegex(CompositorError, "duplicate"):

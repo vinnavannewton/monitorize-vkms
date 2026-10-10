@@ -6,6 +6,7 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 
 readonly MODULE='monitorize_vkms'
+readonly LOCK_PATH='/run/lock/monitorize-vkms.lock'
 readonly ROOT='/sys/kernel/config/monitorize-vkms'
 readonly DEVICE="${ROOT}/monitorize"
 readonly PLANE="${DEVICE}/planes/plane0"
@@ -16,6 +17,19 @@ readonly CONNECTOR="${DEVICE}/connectors/connector0"
 log() { printf '[Monitorize VKMS bootstrap] %s\n' "$*"; }
 die() { printf '[Monitorize VKMS bootstrap] Error: %s\n' "$*" >&2; exit 1; }
 read_value() { tr -d '\n' < "$1"; }
+
+acquire_global_lock() {
+	if [[ -L "$LOCK_PATH" ]]; then
+		die "refusing symlinked lifecycle lock: ${LOCK_PATH}"
+	fi
+	if [[ ! -e "$LOCK_PATH" ]]; then
+		( set -o noclobber; : >"$LOCK_PATH" ) 2>/dev/null || true
+	fi
+	[[ -f "$LOCK_PATH" && -O "$LOCK_PATH" ]] || die "lifecycle lock must be a root-owned regular file: ${LOCK_PATH}"
+	chmod 600 -- "$LOCK_PATH"
+	exec 9<>"$LOCK_PATH"
+	flock -n 9 || die 'another Monitorize VKMS install or display operation is running'
+}
 
 require_exact_children() {
 	local directory="$1" expected="$2" child base
@@ -73,6 +87,7 @@ find_monitorize_drm_card() {
 main() {
 	local drm_card
 	[[ $EUID -eq 0 ]] || die 'must run as root'
+	acquire_global_lock
 	log "loading ${MODULE} with create_default_dev=0"
 	modprobe "$MODULE" create_default_dev=0
 	[[ -d "/sys/module/${MODULE}" ]] || die "${MODULE} did not load"

@@ -18,8 +18,10 @@ VALID_OPERATIONS = ("create", "create-custom", "destroy", "status", "capability"
 
 def helper_response(
     operation: str,
-    timeout: float = 60.0,
+    timeout: float = 120.0,
     edid: bytes | None = None,
+    mode: tuple[int, int, float] | None = None,
+    generation: str | None = None,
 ) -> dict:
     """Call the privileged helper via pkexec and return its JSON response."""
     if operation not in VALID_OPERATIONS:
@@ -40,6 +42,10 @@ def helper_response(
     command = [pkexec, str(HELPER_PATH), operation]
     if edid is not None:
         command.append(base64.b64encode(edid).decode("ascii"))
+    if mode is not None:
+        command.extend(("--mode", str(mode[0]), str(mode[1]), str(mode[2])))
+    if generation is not None:
+        command.extend(("--generation", generation))
 
     try:
         result = subprocess.run(

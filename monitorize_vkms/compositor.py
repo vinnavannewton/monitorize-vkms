@@ -741,6 +741,8 @@ def gnome_activate_vkms(
     for apply_attempt in range(VKMS_APPLY_RETRIES):
         if apply_attempt > 0:
             state = _mutter_state(display_config)
+        if sum(_connector_name(monitor) == connector for monitor in state[1]) != 1:
+            return False, {}, f"{compositor_name} returned ambiguous connector identity for {connector}"
         payload, details, error = _build_vkms_activation_config(
             state, connector, width, height, refresh, dbus
         )
@@ -785,6 +787,8 @@ def gnome_activate_vkms(
 
         for _attempt in range(VKMS_ACTIVATION_ATTEMPTS):
             current = _mutter_state(display_config)
+            if sum(_connector_name(monitor) == connector for monitor in current[1]) != 1:
+                return False, {}, f"{compositor_name} connector identity changed during activation"
             mode = _active_output_modes(current, display_config).get(connector)
             if (
                 _is_monitor_logically_active(current, connector)
@@ -830,7 +834,7 @@ def gnome_deactivate_vkms(
         dbus = _require_dbus()
         display_config = display_config or _display_config_interface(dbus=dbus)
         for _attempt in range(attempts):
-            state = _mutter_state(display_config)
+            state = _checked_removal_state(display_config)
             candidates = (
                 list(target_connectors)
                 if target_connectors is not None
@@ -841,6 +845,8 @@ def gnome_deactivate_vkms(
                 for c in candidates
                 if _is_monitor_logically_active(state, c)
             ]
+            if any(_physical_monitor(state, name) is None for name in candidates):
+                return False
             if not targets:
                 if target_connectors is not None:
                     return True
@@ -871,7 +877,9 @@ def gnome_deactivate_vkms(
                 return False
 
             for _verify in range(attempts):
-                current = _mutter_state(display_config)
+                current = _checked_removal_state(display_config)
+                if any(_physical_monitor(current, name) is None for name in targets):
+                    return False
                 if not any(
                     _is_monitor_logically_active(current, name)
                     for name in targets
@@ -883,6 +891,24 @@ def gnome_deactivate_vkms(
     except Exception as exc:
         log.debug("Failed to remove GNOME VKMS layout: %s", exc)
         return False
+
+
+def _checked_removal_state(display_config):
+    state = _mutter_state(display_config)
+    if (not isinstance(state, (list, tuple)) or len(state) < 4
+            or not isinstance(state[1], (list, tuple))
+            or not isinstance(state[2], (list, tuple))):
+        raise CompositorError("DisplayConfig returned malformed removal state")
+    names = [_connector_name(monitor) for monitor in state[1]]
+    if any(not name for name in names) or len(names) != len(set(names)):
+        raise CompositorError("DisplayConfig returned ambiguous physical outputs")
+    for logical in state[2]:
+        if (not isinstance(logical, (list, tuple)) or len(logical) < 6
+                or not isinstance(logical[5], (list, tuple)) or not logical[5]
+                or any(not isinstance(spec, (list, tuple)) or not spec or str(spec[0]) not in names
+                       for spec in logical[5])):
+            raise CompositorError("DisplayConfig returned malformed logical outputs")
+    return state
 
 
 # =========================================================================
@@ -1212,7 +1238,7 @@ def xrandr_deactivate_vkms(
 def kde_outputs() -> list[dict]:
     """Query current outputs from kscreen-doctor -j."""
     if not shutil.which("kscreen-doctor"):
-        return []
+        raise CompositorError("kscreen-doctor is not installed")
     try:
         res = subprocess.run(
             ["kscreen-doctor", "-j"],
@@ -1221,11 +1247,17 @@ def kde_outputs() -> list[dict]:
             timeout=5,
             check=False,
         )
-        if res.returncode == 0:
-            return json.loads(res.stdout).get("outputs", [])
-    except Exception as exc:
-        log.debug("kscreen-doctor error: %s", exc)
-    return []
+        if res.returncode != 0:
+            raise CompositorError(f"kscreen-doctor query failed: {res.stderr.strip() or res.stdout.strip()}")
+        payload = json.loads(res.stdout)
+        outputs = payload.get("outputs") if isinstance(payload, dict) else None
+        if not isinstance(outputs, list) or any(not isinstance(out, dict) for out in outputs):
+            raise CompositorError("kscreen-doctor returned an invalid outputs schema")
+        return outputs
+    except CompositorError:
+        raise
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, AttributeError) as exc:
+        raise CompositorError(f"Could not read reliable KWin output state: {exc}") from exc
 
 
 def kde_activate_vkms(
@@ -1246,14 +1278,23 @@ def kde_activate_vkms(
 
     while time.monotonic() < deadline:
         current = kde_outputs()
+        if expected_output_name and sum(str(out.get("name") or "") == expected_output_name for out in current) > 1:
+            return False, {}, "KWin returned ambiguous Monitorize output identity"
+        candidates = []
         for out in current:
             name = str(out.get("name") or "")
+            if expected_output_name and name != expected_output_name:
+                continue
             is_new = name not in before_names
             is_reenabled = bool(expected_output_name and name == expected_output_name)
-            if name and (is_new or is_reenabled) and out.get("connected", True):
-                output_name = name
-                output_info = out
-                break
+            if (name and (is_new or is_reenabled) and out.get("connected") is True
+                    and type(out.get("enabled")) is bool and isinstance(out.get("modes"), list)):
+                candidates.append(out)
+        if len(candidates) > 1:
+            return False, {}, "KWin returned ambiguous Monitorize output identity"
+        if candidates:
+            output_info = candidates[0]
+            output_name = str(output_info["name"])
         if output_name:
             break
         time.sleep(0.1)
@@ -1262,24 +1303,36 @@ def kde_activate_vkms(
         expected = f" {expected_output_name}" if expected_output_name else ""
         return False, {}, f"KWin did not expose new or re-enabled output{expected} within {timeout:g}s"
 
-    # Find matching mode
+    # Require a real mode matching both geometry and refresh; enabling an
+    # output with its stale/default mode can otherwise rearrange the desktop.
     target_mode_id = None
+    selected_refresh = None
     for mode in output_info.get("modes", []):
+        if not isinstance(mode, dict):
+            continue
         size = mode.get("size") or {}
-        if int(size.get("width") or 0) == width and int(
-            size.get("height") or 0
-        ) == height:
-            target_mode_id = str(mode.get("id") or "")
+        try:
+            mode_width = int(size.get("width") or 0)
+            mode_height = int(size.get("height") or 0)
+            mode_refresh = float(mode.get("refreshRate", mode.get("refresh_rate", 0)))
+        except (TypeError, ValueError):
+            continue
+        if (mode_width == width and mode_height == height and mode.get("id") is not None
+                and abs(mode_refresh - refresh) <= REFRESH_RATE_TOLERANCE_HZ):
+            target_mode_id = str(mode["id"])
+            selected_refresh = mode_refresh
             break
+    if target_mode_id is None:
+        return False, {}, (
+            f"KWin does not expose {width}x{height}@{refresh:g}Hz on {output_name}; "
+            "refusing to enable it at another mode"
+        )
 
-    selector = str(
-        output_info.get("id")
-        if output_info.get("id") is not None
-        else output_name
-    )
+    # Resolve the stable connector name when the command runs; numeric KScreen
+    # IDs from the snapshot can be recycled after an unrelated hotplug.
+    selector = output_name
     cmds = [f"output.{selector}.enable"]
-    if target_mode_id:
-        cmds.append(f"output.{selector}.mode.{target_mode_id}")
+    cmds.append(f"output.{selector}.mode.{target_mode_id}")
 
     res = subprocess.run(
         ["kscreen-doctor", *cmds],
@@ -1295,13 +1348,70 @@ def kde_activate_vkms(
             f"kscreen-doctor failed: {res.stderr.strip() or res.stdout.strip()}",
         )
 
+    deadline = time.monotonic() + min(timeout, 5.0)
+    while time.monotonic() < deadline:
+        confirmed = [out for out in kde_outputs() if str(out.get("name") or "") == output_name]
+        if len(confirmed) == 1:
+            out = confirmed[0]
+            current_id = str(out.get("currentModeId", out.get("currentMode", "")))
+            if out.get("enabled") is True and out.get("connected") is True and current_id == target_mode_id:
+                break
+        time.sleep(0.1)
+    else:
+        return False, {}, f"KWin did not confirm {output_name} enabled at mode {target_mode_id}"
+
     details = {
         "name": output_name,
         "width": width,
         "height": height,
-        "refresh_rate": refresh,
+        "refresh_rate": selected_refresh,
     }
     return True, details, f"KWin activated {output_name} at {width}x{height}@{refresh:g}Hz"
+
+
+def kde_deactivate_vkms(target_name: str) -> bool:
+    """Disable one exact KWin output, then confirm it is no longer active."""
+    if not shutil.which("kscreen-doctor"):
+        raise CompositorError("kscreen-doctor is not installed; refusing to disconnect the VKMS output")
+    outputs = kde_outputs()
+    matches = [out for out in outputs if str(out.get("name") or "") == target_name]
+    if len(matches) != 1:
+        raise CompositorError(f"Could not uniquely identify KWin output {target_name}")
+    if any(type(out.get("enabled")) is not bool for out in outputs):
+        raise CompositorError("KWin returned output state without a reliable enabled flag")
+    target = matches[0]
+    if target.get("connected") is not True:
+        raise CompositorError("KWin did not confirm the target output is connected")
+    if not target.get("enabled", False):
+        return True
+    enabled = [out for out in outputs if out.get("enabled") is True and out.get("connected") is True]
+    if len(enabled) <= 1:
+        raise CompositorError("Refusing to disable the last active KWin output")
+    selector = target_name
+    result = subprocess.run(
+        ["kscreen-doctor", f"output.{selector}.disable"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise CompositorError(
+            f"kscreen-doctor could not disable {target_name}: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        outputs = kde_outputs()
+        if any(type(out.get("enabled")) is not bool for out in outputs):
+            raise CompositorError("KWin returned output state without a reliable enabled flag")
+        current = [out for out in outputs if str(out.get("name") or "") == target_name]
+        if (len(current) == 1 and current[0].get("enabled") is False
+                and any(out.get("enabled") is True and out.get("connected") is True
+                        for out in outputs if str(out.get("name") or "") != target_name)):
+            return True
+        time.sleep(0.1)
+    raise CompositorError(f"KWin did not confirm that {target_name} is disabled")
 
 
 # =========================================================================
@@ -1314,13 +1424,17 @@ def get_compositor_snapshot() -> tuple[str | None, Any]:
     desktop = detect_compositor()
     if desktop == "gnome":
         try:
-            state = _mutter_state()
+            state = _checked_removal_state(_display_config_interface())
             return "gnome", physical_monitor_identities(state)
         except Exception as exc:
-            log.warning("Could not read GNOME DisplayConfig state: %s", exc)
-            return "gnome", {}
+            raise CompositorError(f"Could not validate GNOME DisplayConfig before creating output: {exc}") from exc
     elif desktop == "kde":
-        outs = {str(o.get("name")) for o in kde_outputs() if o.get("name")}
+        outputs = kde_outputs()
+        names = [str(o.get("name") or "") for o in outputs]
+        if (not outputs or any(not name for name in names) or len(names) != len(set(names))
+                or any(type(o.get("enabled")) is not bool for o in outputs)):
+            raise CompositorError("KWin returned ambiguous or incomplete output state before creation")
+        outs = set(names)
         return "kde", outs
     elif desktop == "cinnamon" and _is_x11_session():
         return "cinnamon", xrandr_outputs()
@@ -1342,7 +1456,8 @@ def activate_in_compositor(
     """Activate newly added virtual display in the active desktop compositor."""
     if desktop == "gnome":
         return gnome_activate_vkms(
-            before_state or {}, width, height, refresh
+            before_state or {}, width, height, refresh,
+            expected_output_name=expected_output_name,
         )
     elif desktop == "kde":
         return kde_activate_vkms(
@@ -1425,25 +1540,30 @@ def activate_in_compositor(
         )
 
 
-def deactivate_in_compositor(desktop: str | None, before_state: Any) -> bool:
+def deactivate_in_compositor(
+    desktop: str | None,
+    before_state: Any,
+    *,
+    target_name: str | None = None,
+    target_connector_id: int | None = None,
+) -> bool:
     """Clean up / remove virtual display from compositor layout."""
+    if target_name is None:
+        raise CompositorError("Cannot remove a Monitorize display without its exact DRM connector identity")
     if desktop == "gnome":
-        return gnome_deactivate_vkms(before_state or {})
+        if not gnome_deactivate_vkms(
+            before_state or {}, target_connectors=[target_name]
+        ):
+            raise CompositorError(f"GNOME did not confirm removal of {target_name}")
+        return True
+    if desktop == "kde":
+        return kde_deactivate_vkms(target_name)
     if desktop == "cinnamon" and _is_x11_session():
-        from .drm import monitorize_drm_connectors
-
-        connectors = monitorize_drm_connectors()
         return xrandr_deactivate_vkms(
-            {name: entry.get("connector_id") for name, entry in connectors.items()}
+            {target_name: target_connector_id}
         )
     if desktop == "cinnamon" and _is_wayland_session():
-        from .drm import monitorize_drm_connectors
-
-        connectors = monitorize_drm_connectors()
-        targets = [
-            name for name, entry in connectors.items()
-            if entry["status"] != "disconnected"
-        ]
+        targets = [target_name]
         if not gnome_deactivate_vkms(
             before_state or {},
             display_config=_muffin_display_config_interface(),
@@ -1453,29 +1573,16 @@ def deactivate_in_compositor(desktop: str | None, before_state: Any) -> bool:
             raise CompositorError("Muffin did not deactivate the Monitorize display")
         return True
     if desktop == "cosmic":
-        from .cosmic_output import set_enabled
-        from .drm import monitorize_drm_connectors
-
-        if not _is_wayland_session():
-            raise CompositorError("COSMIC output management requires a Wayland session.")
-        connectors = monitorize_drm_connectors()
-        targets = [name for name, entry in connectors.items()
-                   if entry["status"] != "disconnected"]
-        if len(targets) > 1:
-            raise CompositorError("Multiple Monitorize connectors found; refusing ambiguous removal.")
-        for name in targets:
-            if not name.startswith("Virtual-"):
-                raise CompositorError("Unexpected Monitorize connector identity.")
-            set_enabled(name, False)
-        return True
+        raise CompositorError(
+            "Live VKMS removal is blocked on COSMIC because protocol disable confirmation "
+            "does not prove renderer teardown is complete. The display remains connected; "
+            "log out and reboot to reset the topology safely."
+        )
     if desktop != "kde" and (desktop or os.environ.get("WAYLAND_DISPLAY")):
         from .drm import monitorize_drm_connectors
         from .wlr_output import set_enabled
 
-        connectors = monitorize_drm_connectors()
-        targets = [name for name, entry in connectors.items() if entry["status"] != "disconnected"]
-        if len(targets) > 1:
-            raise CompositorError("Multiple Monitorize connectors found; refusing ambiguous removal.")
+        targets = [target_name]
         # Hyprland 0.56.2 / Aquamarine 0.15.0 crashes on output disable itself,
         # before the configfs disconnect. Protocol acknowledgement cannot make
         # that renderer teardown safe. Fail closed until a backend fix is
@@ -1484,8 +1591,8 @@ def deactivate_in_compositor(desktop: str | None, before_state: Any) -> bool:
             raise CompositorError(
                 "Live VKMS removal is blocked on Hyprland: disabling or disconnecting "
                 "this output can crash Aquamarine's EGL renderer. The display has "
-                "been left connected. Log out of Hyprland before removing it from "
-                "a separate text console. A validated compositor fix is required "
+                "been left connected. Log out and reboot to reset the topology safely. "
+                "A validated compositor fix is required "
                 "to enable live removal."
             )
         for name in targets:
