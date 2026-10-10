@@ -4,7 +4,7 @@ Standalone virtual display tool and out-of-tree VKMS kernel module for Linux.
 
 `monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates, complete with dynamic EDID generation and desktop layout integration for validated backends.
 
-It can be used as a **standalone CLI tool** or as the backend for https://github.com/vinnavannewton/project-monitorize.
+It can be used as a **standalone CLI tool** or as the backend for [project-monitorize](https://github.com/vinnavannewton/project-monitorize).
 
 ---
 
