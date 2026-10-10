@@ -37,6 +37,18 @@
     <annotate key="org.freedesktop.policykit.exec.argv1">destroy</annotate>
   </action>
 
+  <action id="io.github.vinnavannewton.monitorize-vkms.destroy-all">
+    <description>Stop owned Monitorize VKMS virtual displays</description>
+    <message>Authorization is required to stop the virtual displays.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">destroy-all</annotate>
+  </action>
+
   <action id="io.github.vinnavannewton.monitorize-vkms.status">
     <description>Read Monitorize VKMS virtual display status</description>
     <message>Authorization is required to read virtual display status.</message>

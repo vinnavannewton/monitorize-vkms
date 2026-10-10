@@ -13,7 +13,7 @@ from monitorize_vkms.errors import HelperError, PolkitDenied
 
 
 HELPER_PATH = Path("/usr/libexec/monitorize-vkms/monitorize-vkms-helper")
-VALID_OPERATIONS = ("create", "create-custom", "destroy", "status", "capability")
+VALID_OPERATIONS = ("create", "create-custom", "destroy", "destroy-all", "status", "capability")
 
 
 def helper_response(
@@ -22,12 +22,15 @@ def helper_response(
     edid: bytes | None = None,
     mode: tuple[int, int, float] | None = None,
     generation: str | None = None,
+    slot: str | None = None,
 ) -> dict:
     """Call the privileged helper via pkexec and return its JSON response."""
     if operation not in VALID_OPERATIONS:
         raise ValueError(f"Unsupported helper operation: {operation}")
     if operation == "create-custom" and edid is None:
         raise ValueError("create-custom requires an EDID payload.")
+    if slot is not None and slot not in ("mon1", "mon2", "auto"):
+        raise ValueError("Display must be mon1 or mon2.")
     if not HELPER_PATH.is_file() or not os.access(HELPER_PATH, os.X_OK):
         raise HelperError(
             "The monitorize-vkms helper is not installed. "
@@ -40,6 +43,8 @@ def helper_response(
         )
 
     command = [pkexec, str(HELPER_PATH), operation]
+    if slot is not None:
+        command.extend(("--slot", slot))
     if edid is not None:
         command.append(base64.b64encode(edid).decode("ascii"))
     if mode is not None:
@@ -71,6 +76,8 @@ def helper_response(
         except (TypeError, json.JSONDecodeError):
             continue
 
+    if operation == "destroy-all" and isinstance(response, dict) and isinstance(response.get("results"), dict):
+        return response
     if result.returncode or not isinstance(response, dict) or not response.get("success"):
         detail = ""
         if isinstance(response, dict):

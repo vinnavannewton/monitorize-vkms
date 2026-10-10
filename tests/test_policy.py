@@ -23,6 +23,7 @@ class TestPolkitPolicy(unittest.TestCase):
             "create": "auth_admin_keep",
             "create-custom": "auth_admin_keep",
             "destroy": "yes",
+            "destroy-all": "yes",
             "status": "yes",
             "capability": "yes",
         }
