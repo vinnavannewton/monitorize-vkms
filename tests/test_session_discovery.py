@@ -76,6 +76,18 @@ class SessionDiscoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(helper.VkmsHelperError, "unsafe"):
                 helper._validate_session_socket(Path("/run/user/1000/niri.sock"), 1000, "3")
 
+    def test_satellite_socket_is_not_the_niri_wayland_socket(self):
+        raw = [b"WAYLAND_DISPLAY=wayland-1\0NIRI_SOCKET=/run/user/1000/niri.sock\0",
+               b"WAYLAND_DISPLAY=xwls-1\0NIRI_SOCKET=/run/user/1000/niri.sock\0"]
+        with patch.object(Path, "iterdir", return_value=iter([Path("/proc/10"), Path("/proc/11")])), \
+             patch.object(helper, "_process_in_session", return_value=True), \
+             patch.object(Path, "read_bytes", side_effect=raw), \
+             patch.object(helper, "_validate_session_socket", side_effect=lambda path, uid, session:
+                          7444 if path.name == "xwls-1" else 1041):
+            self.assertEqual(helper._session_connection_environment(1000, "3"), {
+                "WAYLAND_DISPLAY": "wayland-1", "NIRI_SOCKET": "/run/user/1000/niri.sock",
+                "XDG_CURRENT_DESKTOP": "niri"})
+
     def test_socket_peer_must_belong_to_same_user_and_session(self):
         for peer_uid, same_session in ((1001, True), (1000, False), (1000, True)):
             with self.subTest(peer_uid=peer_uid, same_session=same_session), \
