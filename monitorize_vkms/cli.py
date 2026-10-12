@@ -21,6 +21,7 @@ from monitorize_vkms.drm import (
 )
 from monitorize_vkms.edid import generate_edid
 from monitorize_vkms.errors import (
+    MonitorizeVkmsError,
     EdidError,
     HelperError,
     PolkitDenied,
@@ -400,10 +401,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "Desktop compositor detected",
         desktop is not None or headless_drm,
         f"Detected: {desktop}" if desktop else ("No compositor; DRM-only mode" if headless_drm else "Unknown display session"),
-        "Use GNOME, KDE Plasma, Cinnamon/X11, or a headless DRM session.",
+        "Use GNOME, KDE Plasma, Cinnamon/X11, Niri, or a headless DRM session.",
     )
 
-    create_backends = {"gnome", "kde", "cinnamon"}
+    create_backends = {"gnome", "kde", "cinnamon", "niri"}
     create_supported = (desktop in create_backends or headless_drm) and (
         desktop != "cinnamon" or os.environ.get("XDG_SESSION_TYPE") == "x11"
     )
@@ -411,8 +412,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "Create backend has verified mode selection",
         create_supported,
         f"Detected backend: {desktop or 'headless DRM'}",
-        "Use GNOME, KDE Plasma, Cinnamon/X11, or a headless DRM session; other compositor adapters are disabled until mode verification is implemented.",
+        "Use GNOME, KDE Plasma, Cinnamon/X11, Niri, or a headless DRM session; other compositor adapters are disabled until mode verification is implemented.",
     )
+    if desktop == "niri":
+        try:
+            from monitorize_vkms.niri_output import outputs
+            outputs()
+            niri_ok, detail = True, "Niri IPC output queries succeeded"
+        except MonitorizeVkmsError as exc:
+            niri_ok, detail = False, str(exc)
+        check("Niri IPC connection available", niri_ok, detail,
+              "Run from a terminal inside Niri with NIRI_SOCKET set and a Polkit agent running.")
     remove_supported = create_supported
     check(
         "Live removal backend is enabled",

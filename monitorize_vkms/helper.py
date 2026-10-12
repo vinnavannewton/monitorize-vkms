@@ -16,6 +16,8 @@ import secrets
 import signal
 import shutil
 import stat
+import socket
+import struct
 import subprocess
 import sys
 import time
@@ -118,8 +120,20 @@ def _active_session(uid: int) -> tuple[str, dict[str, str]]:
                 name in env.get("XDG_CURRENT_DESKTOP", "").lower()
                 for name in ("kde", "plasma", "gnome", "cinnamon")
             )
+            if values.get("Type") == "wayland" and not known_dbus_desktop and (
+                not env.get("WAYLAND_DISPLAY")
+                or ("niri" in env.get("XDG_CURRENT_DESKTOP", "").lower() and not env.get("NIRI_SOCKET"))
+            ):
+                env.update(_session_connection_environment(uid, session))
             if values.get("Type") == "wayland" and not env.get("WAYLAND_DISPLAY") and not known_dbus_desktop:
                 raise VkmsHelperError("Could not resolve the caller's Wayland socket from the active session.")
+            if values.get("Type") == "wayland" and not known_dbus_desktop:
+                wayland_path = Path(env["WAYLAND_DISPLAY"])
+                if not wayland_path.is_absolute():
+                    wayland_path = Path(f"/run/user/{uid}") / wayland_path
+                _validate_session_socket(wayland_path, uid, session)
+                if env.get("NIRI_SOCKET"):
+                    _validate_session_socket(Path(env["NIRI_SOCKET"]), uid, session)
             if values.get("Type") == "x11" and not env.get("DISPLAY"):
                 display = values.get("Display", "")
                 if display:
@@ -158,7 +172,7 @@ def _require_no_graphical_sessions(loginctl: str) -> None:
 
 def _parse_session_environment(raw: bytes) -> dict[str, str]:
     allowed = {"DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP",
-               "XDG_SESSION_DESKTOP", "DESKTOP_SESSION", "DBUS_SESSION_BUS_ADDRESS"}
+               "XDG_SESSION_DESKTOP", "DESKTOP_SESSION", "DBUS_SESSION_BUS_ADDRESS", "NIRI_SOCKET"}
     env: dict[str, str] = {}
     for item in raw.split(b"\0"):
         key, sep, value = item.partition(b"=")
@@ -166,6 +180,83 @@ def _parse_session_environment(raw: bytes) -> dict[str, str]:
         if sep and name in allowed:
             env[name] = value.decode(errors="ignore")
     return env
+
+
+def _process_in_session(process: Path, uid: int, session: str) -> bool:
+    """Accept only same-user processes associated with the selected logind session."""
+    if process.stat().st_uid != uid:
+        return False
+    scopes = process.joinpath("cgroup").read_text().splitlines()
+    if any(f"session-{session}.scope" in line.split(":", 2)[-1].split("/") for line in scopes):
+        return True
+    # User-service terminals may live outside the session scope. Their inherited
+    # session ID must still identify the already verified active local session.
+    return f"XDG_SESSION_ID={session}".encode() in process.joinpath("environ").read_bytes().split(b"\0")
+
+
+def _validate_session_socket(path: Path, uid: int, session: str) -> None:
+    runtime = Path(f"/run/user/{uid}")
+    if not path.is_absolute() or path.parent != runtime:
+        raise VkmsHelperError("Desktop socket must be directly inside the caller's runtime directory.")
+    runtime_info = runtime.lstat()
+    info = path.lstat()
+    if (not stat.S_ISDIR(runtime_info.st_mode) or runtime_info.st_uid != uid
+            or runtime_info.st_mode & 0o022 or not stat.S_ISSOCK(info.st_mode) or info.st_uid != uid):
+        raise VkmsHelperError("Desktop socket has unsafe ownership or permissions.")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(1)
+        connection.connect(str(path))
+        pid, peer_uid, _gid = struct.unpack("3i", connection.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+    if peer_uid != uid or not _process_in_session(Path(f"/proc/{pid}"), uid, session):
+        raise VkmsHelperError("Desktop socket does not belong to the selected login session.")
+
+
+def _session_connection_environment(uid: int, session: str) -> dict[str, str]:
+    """Recover connection hints, never arbitrary environment or executable paths."""
+    candidates: set[tuple[str, str]] = set()
+    processes = sorted((path for path in Path("/proc").iterdir() if path.name.isdigit()),
+                       key=lambda path: int(path.name))
+    if len(processes) > 16384:
+        raise VkmsHelperError("Too many processes to safely resolve the desktop session.")
+    for process in processes:
+        try:
+            if not _process_in_session(process, uid, session):
+                continue
+            values = _parse_session_environment(process.joinpath("environ").read_bytes())
+            wayland = values.get("WAYLAND_DISPLAY", "")
+            niri = values.get("NIRI_SOCKET", "")
+            if wayland:
+                candidates.add((wayland, niri))
+                if len(candidates) > 32:
+                    raise VkmsHelperError("Too many desktop socket candidates in the active session.")
+        except (OSError, ValueError):
+            continue
+    valid: set[tuple[str, str]] = set()
+    for wayland, niri in candidates:
+        try:
+            wayland_path = Path(wayland)
+            if not wayland_path.is_absolute():
+                wayland_path = Path(f"/run/user/{uid}") / wayland_path
+            _validate_session_socket(wayland_path, uid, session)
+            if niri:
+                _validate_session_socket(Path(niri), uid, session)
+            valid.add((wayland, niri))
+        except (OSError, VkmsHelperError):
+            continue
+    # A compositor/early child can lack NIRI_SOCKET while later applications
+    # have it. Prefer the complete pair only when all Wayland hints agree.
+    if len({wayland for wayland, _niri in valid}) == 1:
+        complete = {item for item in valid if item[1]}
+        if complete:
+            valid = complete
+    if len(valid) != 1:
+        raise VkmsHelperError("Could not uniquely resolve desktop sockets from the active session; run from a terminal in that session.")
+    wayland, niri = valid.pop()
+    result = {"WAYLAND_DISPLAY": wayland}
+    if niri:
+        result.update({"NIRI_SOCKET": niri, "XDG_CURRENT_DESKTOP": "niri"})
+    return result
 
 
 def _lease_path(slot: str) -> Path:
@@ -234,7 +325,9 @@ def _validate_compositor_support(desktop: str | None, env: dict[str, str]) -> No
             f"Display creation is disabled on {desktop}: this checkout cannot safely "
             "verify mode activation and live removal for that compositor."
         )
-    if desktop not in {"gnome", "kde", "cinnamon", None}:
+    if desktop == "niri" and not env.get("NIRI_SOCKET"):
+        raise VkmsHelperError("Niri IPC socket is unavailable in the active session.")
+    if desktop not in {"gnome", "kde", "cinnamon", "niri", None}:
         raise VkmsHelperError(
             f"Display creation is unsupported for detected compositor {desktop!r}; "
             "refusing to connect a display that cannot be safely managed."
@@ -306,6 +399,10 @@ def _worker_main() -> int:
         raise VkmsHelperError("The Monitorize DRM connector identity changed during the operation.")
     if request.get("card") is not None and current.get("card") != request["card"]:
         raise VkmsHelperError("The Monitorize DRM card identity changed during the operation.")
+    if desktop == "niri":
+        matches = list(Path("/sys/class/drm").glob(f"card*-{name}"))
+        if len(matches) != 1 or matches[0].name != f"{current.get('card')}-{name}":
+            raise VkmsHelperError("Niri connector name is ambiguous across DRM cards; refusing output configuration.")
     if action == "activate":
         width, height, refresh = request["mode"]
         snapshot_state = request.get("snapshot")
