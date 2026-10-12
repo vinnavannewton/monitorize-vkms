@@ -131,9 +131,11 @@ def _active_session(uid: int) -> tuple[str, dict[str, str]]:
                 wayland_path = Path(env["WAYLAND_DISPLAY"])
                 if not wayland_path.is_absolute():
                     wayland_path = Path(f"/run/user/{uid}") / wayland_path
-                _validate_session_socket(wayland_path, uid, session)
+                wayland_pid = _validate_session_socket(wayland_path, uid, session)
                 if env.get("NIRI_SOCKET"):
-                    _validate_session_socket(Path(env["NIRI_SOCKET"]), uid, session)
+                    niri_pid = _validate_session_socket(Path(env["NIRI_SOCKET"]), uid, session)
+                    if wayland_pid != niri_pid:
+                        raise VkmsHelperError("Wayland and Niri IPC sockets belong to different server processes.")
             if values.get("Type") == "x11" and not env.get("DISPLAY"):
                 display = values.get("Display", "")
                 if display:
@@ -194,7 +196,7 @@ def _process_in_session(process: Path, uid: int, session: str) -> bool:
     return f"XDG_SESSION_ID={session}".encode() in process.joinpath("environ").read_bytes().split(b"\0")
 
 
-def _validate_session_socket(path: Path, uid: int, session: str) -> None:
+def _validate_session_socket(path: Path, uid: int, session: str) -> int:
     runtime = Path(f"/run/user/{uid}")
     if not path.is_absolute() or path.parent != runtime:
         raise VkmsHelperError("Desktop socket must be directly inside the caller's runtime directory.")
@@ -210,6 +212,7 @@ def _validate_session_socket(path: Path, uid: int, session: str) -> None:
             socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
     if peer_uid != uid or not _process_in_session(Path(f"/proc/{pid}"), uid, session):
         raise VkmsHelperError("Desktop socket does not belong to the selected login session.")
+    return pid
 
 
 def _session_connection_environment(uid: int, session: str) -> dict[str, str]:
@@ -238,18 +241,19 @@ def _session_connection_environment(uid: int, session: str) -> dict[str, str]:
             wayland_path = Path(wayland)
             if not wayland_path.is_absolute():
                 wayland_path = Path(f"/run/user/{uid}") / wayland_path
-            _validate_session_socket(wayland_path, uid, session)
+            wayland_pid = _validate_session_socket(wayland_path, uid, session)
             if niri:
-                _validate_session_socket(Path(niri), uid, session)
+                niri_pid = _validate_session_socket(Path(niri), uid, session)
+                if wayland_pid != niri_pid:
+                    continue
             valid.add((wayland, niri))
         except (OSError, VkmsHelperError):
             continue
-    # A compositor/early child can lack NIRI_SOCKET while later applications
-    # have it. Prefer the complete pair only when all Wayland hints agree.
-    if len({wayland for wayland, _niri in valid}) == 1:
-        complete = {item for item in valid if item[1]}
-        if complete:
-            valid = complete
+    # Complete Niri pairs have matching server PIDs. Other Wayland endpoints
+    # (such as Xwayland Satellite) are not competing Niri compositor sockets.
+    complete = {item for item in valid if item[1]}
+    if complete:
+        valid = complete
     if len(valid) != 1:
         raise VkmsHelperError("Could not uniquely resolve desktop sockets from the active session; run from a terminal in that session.")
     wayland, niri = valid.pop()
