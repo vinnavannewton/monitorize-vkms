@@ -76,6 +76,23 @@ class SessionDiscoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(helper.VkmsHelperError, "unsafe"):
                 helper._validate_session_socket(Path("/run/user/1000/niri.sock"), 1000, "3")
 
+    def test_relative_and_absolute_wayland_names_identify_one_socket(self):
+        for niri in ("", "/run/user/1000/niri.sock"):
+            raw = [f"WAYLAND_DISPLAY={display}\0NIRI_SOCKET={niri}\0".encode()
+                   for display in ("wayland-1", "/run/user/1000/wayland-1")]
+            with self.subTest(niri=niri), \
+                 patch.object(Path, "iterdir", return_value=iter([Path("/proc/10"), Path("/proc/11")])), \
+                 patch.object(helper, "_process_in_session", return_value=True), \
+                 patch.object(Path, "read_bytes", side_effect=raw), \
+                 patch.object(helper, "_validate_session_socket", return_value=1041) as validate:
+                expected = {"WAYLAND_DISPLAY": "wayland-1"}
+                if niri:
+                    expected.update({"NIRI_SOCKET": niri, "XDG_CURRENT_DESKTOP": "niri"})
+                self.assertEqual(helper._session_connection_environment(1000, "3"), expected)
+                wayland_calls = [call.args[0] for call in validate.call_args_list
+                                 if call.args[0].name == "wayland-1"]
+                self.assertEqual(wayland_calls, [Path("/run/user/1000/wayland-1")] * 2)
+
     def test_satellite_socket_is_not_the_niri_wayland_socket(self):
         raw = [b"WAYLAND_DISPLAY=wayland-1\0NIRI_SOCKET=/run/user/1000/niri.sock\0",
                b"WAYLAND_DISPLAY=xwls-1\0NIRI_SOCKET=/run/user/1000/niri.sock\0"]
