@@ -246,7 +246,11 @@ def _session_connection_environment(uid: int, session: str) -> dict[str, str]:
                 niri_pid = _validate_session_socket(Path(niri), uid, session)
                 if wayland_pid != niri_pid:
                     continue
-            valid.add((wayland, niri))
+            # Validation confines Wayland sockets to this user's runtime dir.
+            # Store their basename so relative and absolute spellings of the
+            # same endpoint cannot create false ambiguity. Do not resolve
+            # symlinks: socket ownership and path checks still apply first.
+            valid.add((wayland_path.name, str(Path(niri)) if niri else ""))
         except (OSError, VkmsHelperError):
             continue
     # Complete Niri pairs have matching server PIDs. Other Wayland endpoints
