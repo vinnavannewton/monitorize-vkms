@@ -6,6 +6,15 @@ Standalone virtual display tool and out-of-tree VKMS kernel module for Linux.
 
 It can be used as a **standalone CLI tool** or as the backend for [project-monitorize](https://github.com/vinnavannewton/project-monitorize).
 
+
+
+Monitorize VKMS is derived from Linux VKMS at commit
+`6648301c5bb2ef23f0fb15bcb01d21ff66f36799` (Linux 7.1-rc5),
+with VKMS changes from Louis Chauvet’s v5 “Introduce multiple
+configFS attributes” patch series and Monitorize-specific adaptations.
+
+See src/vkms/ORIGIN.md for provenance.
+
 ---
 
 ## Supported desktops
