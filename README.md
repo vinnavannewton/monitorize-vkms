@@ -10,39 +10,18 @@ It can be used as a **standalone CLI tool** or as the backend for [project-monit
 
 ## Supported desktops
 
-| Desktop Environments  | Compatibility |
-| --------------------- |:-------------:|
-| KDE Plasma            | ✅             |
-| GNOME                 | ✅             |
-| Cinnamon X11          | ✅             |
-| Headless DRM          | ✅             |
-| Hyprland              | ❌             |
-| Niri                  | ✅ (tested on 26.04) |
-| Sway / other wlroots   | ❌             |
-| COSMIC                | ❌             |
+| Desktop Environments | Compatibility |
+| -------------------- |:-------------:|
+| KDE Plasma           | ✅             |
+| GNOME                | ✅             |
+| Cinnamon X11         | ✅             |
+| Hyprland             | ❌             |
+| Niri                 | ✅             |
+| COSMIC               | ❌             |
 
 ---
 
 ## Standalone CLI Usage
-
-### Niri
-
-Run the CLI from a terminal inside your Niri session. The helper recovers
-`WAYLAND_DISPLAY` and `NIRI_SOCKET` from processes associated with the verified
-active local login session, including terminals started as user services. It
-checks socket ownership and server session membership before using them.
-Niri's `niri msg` client must be installed. A running Polkit authentication agent
-is required for the authorization dialog, just as on other desktops.
-
-The Niri backend selects an advertised mode and verifies the actual active mode
-through IPC. Removal disables only the owned output and waits for confirmation
-before disconnecting its DRM connector; it refuses to disable the last active
-output. Niri must discover the Monitorize VKMS DRM device: IPC support alone
-does not guarantee that a particular Niri build can use that device. If discovery
-or activation fails, the connector remains connected for safe recovery. Live
-creation and removal were tested on Niri 26.04 with both virtual-display slots,
-including repeated creation/removal and preservation of the physical display.
-`monitorize-vkms doctor` checks the IPC connection.
 
 After installing and rebooting once, you can manage virtual displays directly from your terminal:
 
@@ -215,11 +194,9 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 
 ## Safety Invariants
 
-- **Isolated Driver**: Module name is `monitorize_vkms`. Distro `vkms` remains untouched at its packaged path.
-- **Fail-Closed Secure Boot**: Refuses unsigned modules if Secure Boot is enabled unless a valid DKMS MOK key is enrolled.
-- **Stock VKMS Coexistence**: Uses a separate `monitorize-vkms` configfs
-  namespace and exports no VKMS symbols, so the distro implementation may be
-  built-in or loaded at the same time.
-- **Atomic Rollback**: Any failure during installation immediately cleans up all staged files and DKMS registrations.
+- **Isolated Driver**: Module name is `monitorize_vkms`. Distro `vkms` remains at its packaged path.
+- **Fail-Closed Secure Boot**: When Secure Boot is enabled, installation requires a signed module and a verified enrolled DKMS MOK certificate.
+- **Stock VKMS Coexistence**: Uses a separate `monitorize-vkms` configfs namespace and exports no kernel symbols, allowing coexistence with built-in or loaded distro VKMS.
+- **Failure Rollback**: Installation failures trigger rollback of installer-managed changes and restoration of saved state. If rollback is incomplete, the installer reports it and preserves recovery snapshots.
 
 ---
