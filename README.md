@@ -24,9 +24,16 @@ See src/vkms/ORIGIN.md for provenance.
 | KDE Plasma           | ✅             |
 | GNOME                | ✅             |
 | Cinnamon X11         | ✅             |
-| Hyprland             | ❌             |
+| Hyprland             | Experimental creation only |
 | Niri                 | ✅             |
 | COSMIC               | ❌             |
+
+Hyprland creation is enabled for testing with Aquamarine 0.15.1 or newer
+(version is not checked automatically). Install `wlr-randr` with `--json`
+support. The current adapter confirms the output is enabled; verify the actual
+resolution and refresh rate in Hyprland. Live removal remains blocked pending
+validation. Use a normal `create` command without `--foreground`, and reboot
+to clear the test displays.
 
 ---
 

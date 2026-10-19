@@ -404,14 +404,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "Use GNOME, KDE Plasma, Cinnamon/X11, Niri, or a headless DRM session.",
     )
 
-    create_backends = {"gnome", "kde", "cinnamon", "niri"}
+    create_backends = {"gnome", "kde", "cinnamon", "niri", "hyprland"}
     create_supported = (desktop in create_backends or headless_drm) and (
         desktop != "cinnamon" or os.environ.get("XDG_SESSION_TYPE") == "x11"
     )
     check(
-        "Create backend has verified mode selection",
+        "Create backend is enabled",
         create_supported,
-        f"Detected backend: {desktop or 'headless DRM'}",
+        ("Hyprland: experimental creation via wlr-randr; requested mode needs live verification"
+         if desktop == "hyprland" else f"Detected backend: {desktop or 'headless DRM'}"),
         "Use GNOME, KDE Plasma, Cinnamon/X11, Niri, or a headless DRM session; other compositor adapters are disabled until mode verification is implemented.",
     )
     if desktop == "niri":
@@ -423,7 +424,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             niri_ok, detail = False, str(exc)
         check("Niri IPC connection available", niri_ok, detail,
               "Run from a terminal inside Niri with NIRI_SOCKET set and a Polkit agent running.")
-    remove_supported = create_supported
+    remove_supported = create_supported and desktop != "hyprland"
     check(
         "Live removal backend is enabled",
         remove_supported,

@@ -88,6 +88,25 @@ class OutputManagementTests(unittest.TestCase):
                 compositor.deactivate_in_compositor("hyprland", None, target_name="Virtual-1")
         change.assert_not_called()
 
+    def test_hyprland_creation_enables_the_identified_output(self):
+        with patch("monitorize_vkms.drm.monitorize_drm_connectors", return_value={"Virtual-1": {}}), \
+             patch.object(wlr_output, "set_enabled", return_value=True) as change:
+            ok, details, _ = compositor.activate_in_compositor(
+                "hyprland", None, 1920, 1080, 60, expected_output_name="Virtual-1"
+            )
+        self.assertTrue(ok)
+        self.assertEqual(details["name"], "Virtual-1")
+        change.assert_called_once_with("Virtual-1", True)
+
+    def test_hyprland_doctor_distinguishes_creation_from_removal(self):
+        with patch.object(cli, "detect_compositor", return_value="hyprland"), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            cli.main(["doctor", "--json"])
+        checks = {item["name"]: item for item in json.loads(output.getvalue())["checks"]}
+        self.assertEqual(checks["Create backend is enabled"]["status"], "PASS")
+        self.assertIn("experimental", checks["Create backend is enabled"]["detail"])
+        self.assertEqual(checks["Live removal backend is enabled"]["status"], "FAIL")
+
 
 if __name__ == "__main__":
     unittest.main()

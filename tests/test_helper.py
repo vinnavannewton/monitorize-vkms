@@ -99,12 +99,13 @@ class TestLifecyclePreflight(unittest.TestCase):
         self.assertEqual(parsed, {"DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0"})
 
     def test_unvalidated_desktops_and_unknown_sessions_fail_before_connect(self):
-        for desktop in ("cosmic", "hyprland", "sway", "unknown"):
+        for desktop in ("cosmic", "sway", "unknown"):
             with self.subTest(desktop=desktop), self.assertRaises(VkmsHelperError):
                 _validate_compositor_support(desktop, {"WAYLAND_DISPLAY": "wayland-0"})
         with self.assertRaisesRegex(VkmsHelperError, "unmanaged output"):
             _validate_compositor_support(None, {"DISPLAY": ":0"})
         _validate_compositor_support("kde", {"WAYLAND_DISPLAY": "wayland-0"})
+        _validate_compositor_support("hyprland", {"WAYLAND_DISPLAY": "wayland-0"})
         _validate_compositor_support("niri", {"WAYLAND_DISPLAY": "wayland-0", "NIRI_SOCKET": "/run/user/1000/niri.sock"})
         with self.assertRaisesRegex(VkmsHelperError, "Niri IPC socket"):
             _validate_compositor_support("niri", {"WAYLAND_DISPLAY": "wayland-0"})
