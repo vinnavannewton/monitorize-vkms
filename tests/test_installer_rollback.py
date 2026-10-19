@@ -52,6 +52,32 @@ if backup_one_target "$1/tool"; then exit 1; fi
 [[ "$(cat "$1/tool")" == old ]]
 ''')
 
+    def test_cli_install_records_checkout_and_rollback_restores_previous_location(self):
+        self.run_shell(["install_cli_and_tools", "backup_one_target", "restore_install_targets"], '''
+WORK_DIR="$1/backup"
+REPOSITORY_DIR="$1/source with spaces"
+PYTHON_LIB_DIR="$1/lib"
+mkdir -p "$WORK_DIR" "$PYTHON_LIB_DIR" "$REPOSITORY_DIR"
+BACKUP_TARGETS=(); BACKUP_EXISTS=(); BOOTSTRAP_WAS_ENABLED=0
+printf '/previous/checkout\\n' > "$PYTHON_LIB_DIR/source-checkout"
+backup_one_target "$PYTHON_LIB_DIR"
+for variable in HELPER_SOURCE HELPER_PATH DBUS_SOURCE DBUS_PATH DBUS_UNIT_SOURCE DBUS_UNIT_PATH \\
+  DBUS_ACTIVATION_SOURCE DBUS_ACTIVATION_PATH DBUS_POLICY_SOURCE DBUS_POLICY_PATH \\
+  DBUS_INTERFACE_SOURCE DBUS_INTERFACE_PATH POLKIT_POLICY_SOURCE POLKIT_POLICY_PATH CLI_SOURCE CLI_PATH; do
+  printf -v "$variable" '%s' "$1/unused"
+done
+install() { :; }
+systemctl() { :; }
+chown() { :; }
+chmod() { :; }
+log() { :; }
+warn() { :; }
+install_cli_and_tools
+[[ "$(cat "$PYTHON_LIB_DIR/source-checkout")" == "$REPOSITORY_DIR" ]]
+restore_install_targets
+[[ "$(cat "$PYTHON_LIB_DIR/source-checkout")" == /previous/checkout ]]
+''')
+
     def test_failed_snapshot_stage_does_not_restore_or_delete_existing_targets(self):
         self.run_shell(["rollback_failed_install"], '''
 WORK_DIR="$1/backup"; mkdir "$WORK_DIR"

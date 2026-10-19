@@ -174,6 +174,56 @@ If everything is a pass, then your done!
 
 ---
 
+## Updating
+
+Run as your normal user:
+
+```sh
+monitorize-vkms update
+```
+
+This fetches the official `main` branch and fast-forwards your original source
+checkout, then runs `install.sh` through `sudo`. Keep that checkout available.
+If the source is already up to date, it skips installation and does not rebuild.
+Local changes, untracked files, local commits, and other branches stop the update
+without discarding your work. Git runs as your user; only installation uses sudo.
+After a successful installation, reboot to activate the installed module.
+
+For an older installation without a saved checkout location, or if you moved it:
+
+```sh
+monitorize-vkms update --source /path/to/monitorize-vkms
+```
+
+Older CLI versions without `update` need one manual `git pull --ff-only` and
+`sudo ./install.sh` from the checkout first.
+
+The command does not upgrade your operating system or reboot automatically.
+A full OS upgrade is not required for every Monitorize VKMS update. If you are
+upgrading the kernel too, update your system using your distribution's normal
+procedure, reboot into that kernel, ensure its matching build headers are
+installed (see prerequisites above), then run `monitorize-vkms reinstall` and reboot
+again. The installer builds for the **running kernel**; DKMS automatic installation
+for future kernels is deliberately disabled.
+
+To rerun installation from the existing source without fetching updates:
+
+```sh
+monitorize-vkms reinstall
+```
+
+Use this after a kernel upgrade or to retry a failed installation. It also accepts
+`--source /path/to/monitorize-vkms`. The installer retains its existing behavior:
+it builds for a new kernel, but verifies/reuses an already matching installation.
+
+The existing installer still checks prerequisites, Secure Boot, and source
+compatibility before system changes. Changed module build inputs must be released
+with a new `VERSION`/DKMS package version; the updater does not bypass this check.
+If installation fails after fetching, the checkout stays updated; resolve the
+reported error and run `monitorize-vkms reinstall`.
+
+---
+
 ## Verification & Troubleshooting
 
 Check health using the built-in doctor command:

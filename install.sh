@@ -425,6 +425,10 @@ install_cli_and_tools() {
 	fi
 	install -d -m 0755 "${PYTHON_LIB_DIR}/monitorize_vkms"
 	install -m 0644 "${REPOSITORY_DIR}/VERSION" "${PYTHON_LIB_DIR}/"
+	# Kept inside the existing CLI backup/rollback and uninstall target.
+	printf '%s\n' "$REPOSITORY_DIR" > "${PYTHON_LIB_DIR}/source-checkout"
+	chown root:root "${PYTHON_LIB_DIR}/source-checkout"
+	chmod 0644 "${PYTHON_LIB_DIR}/source-checkout"
 	local pyfile
 	for pyfile in "${REPOSITORY_DIR}"/monitorize_vkms/*.py; do
 		install -m 0644 "$pyfile" "${PYTHON_LIB_DIR}/monitorize_vkms/"
@@ -562,6 +566,8 @@ main() {
 	printf 'At the next boot the persistent DRM card is created before the display manager.\n\n'
 	printf 'Standalone CLI commands:\n'
 	printf '  monitorize-vkms doctor\n'
+	printf '  monitorize-vkms update\n'
+	printf '  monitorize-vkms reinstall\n'
 	printf '  monitorize-vkms create 2340x1080@60\n'
 	printf '  monitorize-vkms list\n'
 	printf '  monitorize-vkms status\n'

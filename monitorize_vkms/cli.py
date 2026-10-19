@@ -475,6 +475,16 @@ def main(args: list[str] | None = None) -> int:
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    p_update = subparsers.add_parser(
+        "update", help="Update the source checkout and run the installer with sudo"
+    )
+    p_update.add_argument("--source", metavar="PATH", help="Original Git checkout (overrides saved location)")
+
+    p_reinstall = subparsers.add_parser(
+        "reinstall", help="Run the installer from the existing source checkout without pulling"
+    )
+    p_reinstall.add_argument("--source", metavar="PATH", help="Original Git checkout (overrides saved location)")
+
     # create
     p_create = subparsers.add_parser(
         "create", help="Create a virtual display with specified resolution and refresh rate"
@@ -542,7 +552,13 @@ def main(args: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    if parsed.command == "create":
+    if parsed.command == "update":
+        from monitorize_vkms.update import update
+        return update(parsed.source)
+    elif parsed.command == "reinstall":
+        from monitorize_vkms.update import update
+        return update(parsed.source, reinstall=True)
+    elif parsed.command == "create":
         return cmd_create(parsed)
     elif parsed.command == "remove":
         return cmd_remove(parsed)
