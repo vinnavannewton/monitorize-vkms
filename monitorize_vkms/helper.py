@@ -335,7 +335,7 @@ def _validate_compositor_support(desktop: str | None, env: dict[str, str]) -> No
         )
     if desktop == "niri" and not env.get("NIRI_SOCKET"):
         raise VkmsHelperError("Niri IPC socket is unavailable in the active session.")
-    # Hyprland creation is experimental; live removal stays blocked separately.
+    # Hyprland lifecycle is experimental pending live validation on Aquamarine 0.15.1+.
     if desktop not in {"gnome", "kde", "cinnamon", "niri", "hyprland", None}:
         raise VkmsHelperError(
             f"Display creation is unsupported for detected compositor {desktop!r}; "

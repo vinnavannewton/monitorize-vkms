@@ -1594,18 +1594,8 @@ def deactivate_in_compositor(
         from .wlr_output import set_enabled
 
         targets = [target_name]
-        # Hyprland 0.56.2 / Aquamarine 0.15.0 crashes on output disable itself,
-        # before the configfs disconnect. Protocol acknowledgement cannot make
-        # that renderer teardown safe. Fail closed until a backend fix is
-        # validated; do not bypass this using a direct kernel disconnect.
-        if targets and (desktop == "hyprland" or os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")):
-            raise CompositorError(
-                "Live VKMS removal is blocked on Hyprland: disabling or disconnecting "
-                "this output can crash Aquamarine's EGL renderer. The display has "
-                "been left connected. Log out and reboot to reset the topology safely. "
-                "A validated compositor fix is required "
-                "to enable live removal."
-            )
+        # Hyprland testing requires Aquamarine 0.15.1+ (shared EGL teardown fix).
+        # Confirm compositor disable before the helper disconnects configfs.
         for name in targets:
             if not name.startswith("Virtual-"):
                 raise CompositorError("Unexpected Monitorize connector identity.")

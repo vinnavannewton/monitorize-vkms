@@ -27,12 +27,12 @@ See src/vkms/ORIGIN.md for provenance.
 | Hyprland             | ✅ |
 | Niri                 | ✅             |
 
-Hyprland creation is enabled for testing with Aquamarine 0.15.1 or newer
+Hyprland creation and removal are enabled for testing with Aquamarine 0.15.1 or newer
 (version is not checked automatically). Install `wlr-randr` with `--json`
 support. The current adapter confirms the output is enabled; verify the actual
-resolution and refresh rate in Hyprland. Live removal remains blocked pending
-validation. Use a normal `create` command without `--foreground`, and reboot
-to clear the test displays.
+resolution and refresh rate in Hyprland. Removal confirms the named output is
+disabled in the compositor before disconnecting it in configfs, and refuses to
+disable the last active output. Full live lifecycle validation remains pending.
 
 ---
 

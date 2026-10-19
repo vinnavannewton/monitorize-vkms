@@ -82,11 +82,15 @@ class OutputManagementTests(unittest.TestCase):
             self.assertEqual(cli.main(["remove", "--json"]), 1)
         self.assertFalse(json.loads(output.getvalue())["success"])
 
-    def test_hyprland_live_removal_is_fail_closed(self):
+    def test_hyprland_live_removal_disables_exact_output(self):
         with patch.object(wlr_output, "set_enabled") as change:
-            with self.assertRaisesRegex(CompositorError, "Live VKMS removal is blocked"):
+            self.assertTrue(compositor.deactivate_in_compositor("hyprland", None, target_name="Virtual-1"))
+        change.assert_called_once_with("Virtual-1", False)
+
+    def test_hyprland_removal_propagates_disable_failure(self):
+        with patch.object(wlr_output, "set_enabled", side_effect=CompositorError("disable rejected")):
+            with self.assertRaisesRegex(CompositorError, "disable rejected"):
                 compositor.deactivate_in_compositor("hyprland", None, target_name="Virtual-1")
-        change.assert_not_called()
 
     def test_hyprland_creation_enables_the_identified_output(self):
         with patch("monitorize_vkms.drm.monitorize_drm_connectors", return_value={"Virtual-1": {}}), \
@@ -98,14 +102,14 @@ class OutputManagementTests(unittest.TestCase):
         self.assertEqual(details["name"], "Virtual-1")
         change.assert_called_once_with("Virtual-1", True)
 
-    def test_hyprland_doctor_distinguishes_creation_from_removal(self):
+    def test_hyprland_doctor_reports_experimental_lifecycle_enabled(self):
         with patch.object(cli, "detect_compositor", return_value="hyprland"), \
              contextlib.redirect_stdout(io.StringIO()) as output:
             cli.main(["doctor", "--json"])
         checks = {item["name"]: item for item in json.loads(output.getvalue())["checks"]}
         self.assertEqual(checks["Create backend is enabled"]["status"], "PASS")
         self.assertIn("experimental", checks["Create backend is enabled"]["detail"])
-        self.assertEqual(checks["Live removal backend is enabled"]["status"], "FAIL")
+        self.assertEqual(checks["Live removal backend is enabled"]["status"], "PASS")
 
 
 if __name__ == "__main__":

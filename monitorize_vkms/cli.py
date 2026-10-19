@@ -411,7 +411,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     check(
         "Create backend is enabled",
         create_supported,
-        ("Hyprland: experimental creation via wlr-randr; requested mode needs live verification"
+        ("Hyprland: experimental lifecycle via wlr-randr; requires Aquamarine 0.15.1+; requested mode needs live verification"
          if desktop == "hyprland" else f"Detected backend: {desktop or 'headless DRM'}"),
         "Use GNOME, KDE Plasma, Cinnamon/X11, Niri, or a headless DRM session; other compositor adapters are disabled until mode verification is implemented.",
     )
@@ -424,12 +424,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             niri_ok, detail = False, str(exc)
         check("Niri IPC connection available", niri_ok, detail,
               "Run from a terminal inside Niri with NIRI_SOCKET set and a Polkit agent running.")
-    remove_supported = create_supported and desktop != "hyprland"
+    remove_supported = create_supported
     check(
         "Live removal backend is enabled",
         remove_supported,
         f"Live removal backend: {desktop or 'headless DRM'}",
-        "Live removal is disabled for COSMIC, Hyprland, and unvalidated compositors because protocol acknowledgement does not prove renderer teardown.",
+        "Live removal is disabled for COSMIC and unvalidated compositors because protocol acknowledgement does not prove renderer teardown.",
     )
     has_systemd = bool(shutil.which("loginctl") and shutil.which("systemctl")
                        and Path("/run/systemd/system").is_dir())
