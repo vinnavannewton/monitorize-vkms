@@ -24,9 +24,8 @@ See src/vkms/ORIGIN.md for provenance.
 | KDE Plasma           | ✅             |
 | GNOME                | ✅             |
 | Cinnamon X11         | ✅             |
-| Hyprland             | Experimental creation only |
+| Hyprland             | ✅ |
 | Niri                 | ✅             |
-| COSMIC               | ❌             |
 
 Hyprland creation is enabled for testing with Aquamarine 0.15.1 or newer
 (version is not checked automatically). Install `wlr-randr` with `--json`
