@@ -155,3 +155,20 @@ class TestCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ReservedRemoveTests(unittest.TestCase):
+    def test_reserved_slot_is_removed_through_coordinator(self):
+        from monitorize_vkms.cli import cmd_remove
+        response={'success':False,'changed':False,'results':{'mon1':{'error':'Boot remote-login output is reserved; ordinary cleanup cannot remove it.'},'mon2':{'changed':False}}}
+        with patch('monitorize_vkms.cli.helper_response',return_value=response), \
+             patch('monitorize_vkms.remote_login_client.remove_reserved',return_value={'success':True,'changed':True}) as remove, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            result=cmd_remove(SimpleNamespace(display=None,json=False))
+        self.assertEqual(result,0);remove.assert_called_once()
+        self.assertIn('removed',output.getvalue().lower())
+    def test_failed_removal_is_not_reported_as_no_active_display(self):
+        from monitorize_vkms.cli import cmd_remove
+        response={'success':False,'changed':False,'results':{'mon1':{'error':'busy'}}}
+        with patch('monitorize_vkms.cli.helper_response',return_value=response),contextlib.redirect_stdout(io.StringIO()) as output,contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cmd_remove(SimpleNamespace(display=None,json=False)),1)
+        self.assertNotIn('No active',output.getvalue())

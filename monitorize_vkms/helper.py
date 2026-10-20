@@ -23,8 +23,13 @@ import sys
 import time
 
 if __name__ == "__main__":
-    # The installed helper lives in /usr/libexec, separate from its package in /usr/lib.
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib" / "monitorize-vkms"))
+    # Root wrappers live in libexec; imported helpers spawn their package copy.
+    # Isolated Python strips the script directory, so both layouts need an
+    # explicit package root derived from this fixed installed script.
+    script = Path(__file__).resolve()
+    package_root = (script.parent.parent if script.parent.name == "monitorize_vkms"
+                    else script.parents[2] / "lib" / "monitorize-vkms")
+    sys.path.insert(0, str(package_root))
 
 from monitorize_vkms.configfs import CONFIGFS_SUBSYSTEM
 
@@ -33,6 +38,7 @@ INSTANCE_NAMES = {
     "mon2": "connector1",
 }
 CUSTOM_MODULE_NAME = "monitorize_vkms"
+BOOT_DISPLAY_PROTOCOL = 1
 CONNECTOR_STATUS_CONNECTED = "1"
 CONNECTOR_STATUS_DISCONNECTED = "2"
 LIFECYCLE_LOCK = Path("/run/lock/monitorize-vkms.lock")
@@ -78,7 +84,7 @@ def _acquire_lifecycle_lock():
         raise VkmsHelperError("Another Monitorize VKMS install, bootstrap, or display operation is running.") from exc
 
 
-def _active_session(uid: int) -> tuple[str, dict[str, str]]:
+def _active_session(uid: int, *, allow_inactive=False) -> tuple[str, dict[str, str]]:
     """Resolve one active local logind session and build a small worker environment."""
     loginctl = shutil.which("loginctl")
     if not loginctl:
@@ -100,7 +106,9 @@ def _active_session(uid: int) -> tuple[str, dict[str, str]]:
             values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
             if values.get("User") != str(uid):
                 raise VkmsHelperError("The selected login session does not belong to the authenticated caller.")
-            if values.get("Active") != "yes" or values.get("Remote") != "no":
+            if (not allow_inactive and values.get("Active") != "yes") or values.get("Remote") != "no":
+                continue
+            if allow_inactive and values.get('Type') not in ('x11', 'wayland'):
                 continue
             if values.get("Type") not in ("x11", "wayland", "tty"):
                 continue
@@ -615,6 +623,8 @@ def _destroy_slot(root: Path, logs: list[str], slot: str, uid: int,
                   session_id: str, env: dict[str, str], generation: str | None) -> bool:
     _instance, connector = _require_bootstrap(root, logs, slot)
     lease = _read_lease(slot)
+    if lease and (lease.get("kind") == "boot" or lease.get("protected")):
+        raise VkmsHelperError("Boot remote-login output is reserved; ordinary cleanup cannot remove it.")
     connected = _read(connector / "status") == CONNECTOR_STATUS_CONNECTED
     if not connected:
         if lease:
@@ -678,7 +688,14 @@ def main() -> int:
         lock_fd = _acquire_lifecycle_lock()
         try:
             uid = int(os.environ["PKEXEC_UID"])
-            session_id, env = _active_session(uid)
+            if os.environ.get('MONITORIZE_VKMS_UNATTENDED') == '1':
+                from monitorize_vkms.authorization import read as authorization_record
+                record = authorization_record(uid)
+                if not record or (args.operation in ('create', 'create-custom') and not record['enabled']):
+                    raise VkmsHelperError('Unattended VKMS authorization is missing or revoked.')
+                session_id, env = _active_session(uid, allow_inactive=True)
+            else:
+                session_id, env = _active_session(uid)
             if args.slot == "auto":
                 for candidate in INSTANCE_NAMES:
                     _instance, candidate_connector = _require_bootstrap(root, logs, candidate)
@@ -716,6 +733,8 @@ def main() -> int:
                 args.mode = [int(args.mode[0]), int(args.mode[1]), args.mode[2]]
             connected = _read(connector / "status") == CONNECTOR_STATUS_CONNECTED
             lease = _read_lease(args.slot)
+            if lease and (lease.get("kind") == "boot" or lease.get("protected")):
+                raise VkmsHelperError("Boot remote-login output is reserved; use the managed handoff instead.")
             digest = hashlib.sha256(custom_edid or b"").hexdigest()
             if connected:
                 boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
@@ -809,7 +828,14 @@ def main() -> int:
         lock_fd = _acquire_lifecycle_lock()
         try:
             uid = int(os.environ["PKEXEC_UID"])
-            session_id, env = _active_session(uid)
+            if os.environ.get('MONITORIZE_VKMS_UNATTENDED') == '1':
+                from monitorize_vkms.authorization import read as authorization_record
+                record = authorization_record(uid)
+                if not record or (args.operation in ('create', 'create-custom') and not record['enabled']):
+                    raise VkmsHelperError('Unattended VKMS authorization is missing or revoked.')
+                session_id, env = _active_session(uid, allow_inactive=True)
+            else:
+                session_id, env = _active_session(uid)
             slots = INSTANCE_NAMES if args.operation == "destroy-all" else (args.slot,)
             results = {}
             for slot in slots:
