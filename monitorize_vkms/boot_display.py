@@ -106,7 +106,7 @@ def desktop_operation_installed(uid: int, session: str, operation: str, *, engin
         actual, environment = helper._active_session(uid)
         if actual != session or environment.get('XDG_SESSION_TYPE') not in ('wayland', 'x11'):
             raise PermissionError('Selected desktop session changed.')
-        if value['phase'] == 'desktop' and value['session'] != session:
+        if value['phase'] == 'desktop' and value['session'] != session and operation != 'release':
             raise PermissionError('Reservation belongs to another desktop session.')
         def check():
             if helper._active_session(uid)[0] != session:

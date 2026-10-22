@@ -19,6 +19,7 @@ class HostDeliveryTests(unittest.TestCase):
             try:module.stage_host_assets(stage)
             finally:os.umask(mask)
             helper=stage/'usr/libexec/monitorize-vkms/monitorize-vkms-helper'
+            self.assertEqual((stage/'usr/libexec/monitorize-vkms/monitorize-vkms-authorization').read_bytes(), (ROOT/'monitorize_vkms/authorization_setup.py').read_bytes())
             package=stage/'usr/lib/monitorize-vkms/monitorize_vkms/helper.py'
             self.assertEqual(helper.read_bytes(),package.read_bytes())
             self.assertTrue((stage/'usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py').is_file())

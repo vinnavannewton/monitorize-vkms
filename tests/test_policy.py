@@ -28,6 +28,9 @@ class TestPolkitPolicy(unittest.TestCase):
             "capability": "yes",
         }
 
+        configuration = actions.pop(ACTION_PREFIX + 'configure-unattended')
+        self.assertEqual(configuration.findtext('defaults/allow_active'), 'auth_admin')
+        self.assertEqual(configuration.findtext("annotate[@key='org.freedesktop.policykit.exec.path']"), '/usr/libexec/monitorize-vkms/monitorize-vkms-authorization')
         self.assertEqual(set(actions), {ACTION_PREFIX + name for name in expected})
         for operation, active_default in expected.items():
             with self.subTest(operation=operation):

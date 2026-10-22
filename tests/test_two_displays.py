@@ -17,6 +17,12 @@ from monitorize_vkms.drm import monitorize_drm_connectors
 
 
 class TwoDisplayTests(unittest.TestCase):
+    def setUp(self):
+        # These cases exercise the unenrolled path regardless of host grants.
+        grant = patch.object(dbus_service.authorization, 'read', return_value=None)
+        grant.start()
+        self.addCleanup(grant.stop)
+
     def test_edids_have_distinct_stable_identity(self):
         first = generate_edid(1920, 1080, 60, "mon1")
         second = generate_edid(1920, 1080, 60, "mon2")

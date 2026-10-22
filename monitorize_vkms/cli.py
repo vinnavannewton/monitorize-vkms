@@ -176,10 +176,25 @@ def cmd_remove(args: argparse.Namespace) -> int:
         print(f"Authentication Error: {exc}", file=sys.stderr)
         return 1
     except HelperError as exc:
-        if args.json:
-            return _json_error(str(exc), "helper_error")
-        print(f"Helper Error: {exc}", file=sys.stderr)
-        return 1
+        if args.display != 'mon2' and 'reserved' in str(exc).lower():
+            helper_res={'success':False,'changed':False,'results':{'mon1':{'error':str(exc)}}}
+        else:
+            if args.json:
+                return _json_error(str(exc), "helper_error")
+            print(f"Helper Error: {exc}", file=sys.stderr)
+            return 1
+
+    reserved=helper_res.get('results',{}).get('mon1',{}).get('error','')
+    if args.display != 'mon2' and 'reserved' in reserved.lower():
+        from monitorize_vkms.remote_login_client import remove_reserved
+        try:
+            managed=remove_reserved()
+            if not managed.get('success'):raise HelperError(managed.get('message','Managed removal failed.'))
+            helper_res.setdefault('results',{})['mon1']={'changed':managed.get('changed',False)}
+            helper_res['changed']=bool(helper_res.get('changed') or managed.get('changed'))
+            helper_res['success']=not any('error' in result for result in helper_res['results'].values())
+        except HelperError as error:
+            helper_res['results']['mon1']={'error':str(error)}
 
     changed = helper_res.get("changed", False)
     data = {
@@ -189,6 +204,7 @@ def cmd_remove(args: argparse.Namespace) -> int:
         "message": ("Some displays were removed; others need attention."
                     if not helper_res.get("success", True) and changed else
                     "Virtual display removed." if changed else
+                    "Virtual display removal failed; see details below." if not helper_res.get("success",True) else
                     "No active virtual display was found."),
     }
     if args.json:

@@ -1,0 +1,16 @@
+[Unit]
+Description=Reserved Monitorize remote-login virtual display
+Requires=monitorize-vkms-bootstrap.service
+After=monitorize-vkms-bootstrap.service systemd-logind.service
+Before=display-manager.service
+ConditionPathExists=/etc/monitorize/remote-login.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py
+RemainAfterExit=yes
+TimeoutStartSec=15
+# No ExecStop: a connected login/desktop fallback must not be unplugged.
+
+[Install]
+WantedBy=graphical.target

@@ -57,6 +57,17 @@ class SessionDiscoveryTests(unittest.TestCase):
                 self.assertFalse(helper._process_in_session(process, 1000, "2"))
                 self.assertFalse(helper._process_in_session(process, 1001, "20"))
 
+    def test_enrolled_inactive_local_desktop_does_not_relax_manual_or_remote_access(self):
+        for allow_inactive, remote, expected in ((False, 'no', False), (True, 'no', True), (True, 'yes', False)):
+            properties = f'Active=no\nRemote={remote}\nType=wayland\nDesktop=kde\nLeader=0\nUser=1000\n'
+            with self.subTest(allow_inactive=allow_inactive, remote=remote), patch.object(helper.shutil, 'which', return_value='/usr/bin/loginctl'), patch.object(helper.subprocess, 'run', side_effect=[SimpleNamespace(stdout='3'), SimpleNamespace(stdout=properties)]), patch.object(helper.pwd, 'getpwuid', return_value=SimpleNamespace(pw_dir='/home/test', pw_name='test')):
+                if expected:
+                    session, _ = helper._active_session(1000, allow_inactive=allow_inactive)
+                    self.assertEqual(session, '3')
+                else:
+                    with self.assertRaises(helper.VkmsHelperError):
+                        helper._active_session(1000, allow_inactive=allow_inactive)
+
     def test_missing_leader_environment_recovers_niri(self):
         properties = "Active=yes\nRemote=no\nType=wayland\nDesktop=niri\nLeader=0\nUser=1000\n"
         recovered = {"WAYLAND_DISPLAY": "wayland-1", "NIRI_SOCKET": "/run/user/1000/niri.sock"}
