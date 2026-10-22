@@ -190,6 +190,7 @@ verify_removal() {
 
 main() {
 	require_root
+	/usr/bin/python3 -I "$(dirname -- "${BASH_SOURCE[0]}")/monitorize_vkms/package_maintenance.py" pre-remove
 	command -v find >/dev/null || die "find is required"
 	command -v depmod >/dev/null || die "depmod is required"
 	command -v modinfo >/dev/null || die "modinfo is required"
@@ -197,6 +198,7 @@ main() {
 	acquire_global_lock
 	remove_bootstrap_service
 	remove_cli_and_tools
+	rm -f -- /usr/share/monitorize-vkms/capabilities.json
 
 	if command -v dkms >/dev/null; then
 		remove_dkms_packages

@@ -2,6 +2,30 @@
 
 Standalone virtual display tool and out-of-tree VKMS kernel module for Linux.
 
+Remote-login host support is implemented in the 0.3.0 development tree. It reserves
+mon1 at 1920x1080@60 without connecting it at boot, and provides protected on-demand
+greeter/desktop lifecycle operations to Monitorize. Ordinary display creation remains
+available without enrollment. GNOME/GDM live boot and headless acceptance is pending;
+protocol availability is not a claim that every display manager has been validated.
+
+Native host package recipes are in `packaging/arch`, `packaging/deb/debian`, and
+`packaging/rpm`. The common staging command is
+`python3 scripts/stage-host-assets.py --destdir /tmp/monitorize-host-package --dkms`.
+Arch: run `makepkg` from `packaging/arch` with the required dependencies installed.
+DEB: copy `packaging/deb/debian` to the release tree's `debian` directory and run
+`dpkg-buildpackage` in a matching Debian/Ubuntu build environment. RPM: create a
+`monitorize-vkms-0.3.0.tar.gz` release source archive and build with the supplied spec.
+Install kernel headers matching the target kernel before installing a host package.
+Packages build/install the module through DKMS; they do not unload the running GPU.
+Reboot to initialize the persistent topology when first installing the host.
+
+The host package owns Python/helpers, bootstrap, policies, DKMS sources and
+`/usr/share/monitorize-vkms/capabilities.json`. Monitorize's app package owns remote
+login units and enrollment. Portable app binaries need these native system packages.
+Installing packages does not enroll remote login. Before replacing/removing an
+enrolled host, disable remote login in Settings and release its reservation; pairing
+is retained. The Arch transaction guard rejects replacement while ownership is active.
+
 `monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates, complete with dynamic EDID generation and desktop layout integration for validated backends.
 
 It can be used as a **standalone CLI tool** or as the backend for [project-monitorize](https://github.com/vinnavannewton/project-monitorize).

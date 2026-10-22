@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+    /usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/package_maintenance.py post-install
+fi
+#DEBHELPER#

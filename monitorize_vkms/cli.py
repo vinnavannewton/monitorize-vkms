@@ -456,12 +456,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     )
 
     all_passed = all(c["status"] == "PASS" for c in checks)
+    from monitorize_vkms.protocols import installed_capabilities
+    remote_protocols = installed_capabilities()
 
     if args.json:
         return _json_out({
             "success": all_passed,
             "all_passed": all_passed,
             "checks": checks,
+            "remote_login_protocols": remote_protocols,
         }, exit_code=0 if all_passed else 1)
 
     print(f"Monitorize VKMS Doctor (v{__version__}):\n")
@@ -473,7 +476,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         if c["remedy"]:
             print(f"      Remedy: {c['remedy']}")
 
-    print("\nResult: " + ("All checks passed!" if all_passed else "Some checks failed. See remedies above."))
+    print("\nRemote-login host protocols: " + ("installed; boot/display-manager validation is separate" if remote_protocols
+          else "not installed; ordinary display checks are independent"))
+    print("\nResult: " + ("All ordinary display checks passed!" if all_passed else "Some checks failed. See remedies above."))
     return 0 if all_passed else 1
 
 

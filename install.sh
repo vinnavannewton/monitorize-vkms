@@ -38,6 +38,7 @@ readonly POLKIT_POLICY_PATH="/usr/share/polkit-1/actions/io.github.vinnavannewto
 readonly CLI_SOURCE="${REPOSITORY_DIR}/scripts/monitorize-vkms-cli"
 readonly CLI_PATH="/usr/bin/monitorize-vkms"
 readonly PYTHON_LIB_DIR="/usr/lib/monitorize-vkms"
+readonly CAPABILITIES_PATH="/usr/share/monitorize-vkms/capabilities.json"
 
 DISTRO_FAMILY=""
 DISTRO_NAME="Linux"
@@ -410,6 +411,8 @@ install_bootstrap_service() {
 
 install_cli_and_tools() {
 	log "Installing standalone CLI, helper, and Polkit policy"
+	python3 "${REPOSITORY_DIR}/scripts/stage-host-assets.py" --destdir "${WORK_DIR}/host-userspace"
+	install -D -o root -g root -m 0644 "${WORK_DIR}/host-userspace/usr/share/monitorize-vkms/capabilities.json" "$CAPABILITIES_PATH"
 	install -D -o root -g root -m 0755 "$HELPER_SOURCE" "$HELPER_PATH"
 	install -D -o root -g root -m 0755 "$DBUS_SOURCE" "$DBUS_PATH"
 	install -D -o root -g root -m 0644 "$DBUS_UNIT_SOURCE" "$DBUS_UNIT_PATH"
@@ -457,7 +460,7 @@ backup_install_targets() {
 	local target version module_file module_directory target_kernel
 	for target in "$MODPROBE_CONFIG" "$CONFIG_BACKUP" "$BOOTSTRAP_PATH" "$BOOTSTRAP_UNIT_PATH" \
 		"$HELPER_PATH" "$DBUS_PATH" "$DBUS_UNIT_PATH" "$DBUS_ACTIVATION_PATH" "$DBUS_POLICY_PATH" "$DBUS_INTERFACE_PATH" \
-		"$POLKIT_POLICY_PATH" "$CLI_PATH" "$PYTHON_LIB_DIR" "$SOURCE_DIR" \
+		"$POLKIT_POLICY_PATH" "$CLI_PATH" "$PYTHON_LIB_DIR" "$CAPABILITIES_PATH" "$SOURCE_DIR" \
 		"/var/lib/dkms/${PACKAGE_NAME}"; do
 		backup_one_target "$target"
 	done
@@ -534,6 +537,7 @@ rollback_failed_install() {
 
 main() {
 	require_root
+	/usr/bin/python3 -I "${REPOSITORY_DIR}/monitorize_vkms/package_maintenance.py" pre-remove
 	validate_metadata
 	detect_distro
 	check_prerequisites

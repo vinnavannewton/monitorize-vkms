@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = monitorize-vkms
+
+[Action]
+Description = Checking Monitorize remote-login ownership before replacing host support
+When = PreTransaction
+Exec = /usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/package_maintenance.py pre-remove
+AbortOnFail
