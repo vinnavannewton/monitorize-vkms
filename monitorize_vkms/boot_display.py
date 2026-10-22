@@ -17,6 +17,8 @@ if __name__ == '__main__':
 
 from monitorize_vkms.lease import read_lease
 from monitorize_vkms.boot_policy import validate_protected
+GREETER_ON_DEMAND_PROTOCOL = 1
+IDLE_DISPLAY_PROTOCOL = 1
 
 
 def boot_output_status(state: Path) -> dict | None:

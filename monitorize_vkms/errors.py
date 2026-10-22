@@ -15,6 +15,10 @@ class HelperError(MonitorizeVkmsError):
     """The privileged helper failed."""
 
 
+class ManagedDisplayError(HelperError):
+    """The output belongs to the authenticated remote-login coordinator."""
+
+
 class PolkitDenied(HelperError):
     """Polkit authorization was denied or unavailable."""
 

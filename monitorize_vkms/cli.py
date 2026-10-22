@@ -24,6 +24,7 @@ from monitorize_vkms.errors import (
     MonitorizeVkmsError,
     EdidError,
     HelperError,
+    ManagedDisplayError,
     PolkitDenied,
 )
 from monitorize_vkms.helper_client import HELPER_PATH, helper_response
@@ -154,7 +155,21 @@ def cmd_create(args: argparse.Namespace) -> int:
 
 def cmd_remove(args: argparse.Namespace) -> int:
     try:
-        helper_res = helper_response("destroy" if args.display else "destroy-all", slot=args.display)
+        try:
+            helper_res = helper_response("destroy" if args.display else "destroy-all", slot=args.display)
+        except ManagedDisplayError:
+            from monitorize_vkms.remote_login_client import remove_reserved
+            helper_res = remove_reserved()
+        outcomes = helper_res.get("results", {})
+        if outcomes.get("mon1", {}).get("error_kind") == "protected_display":
+            from monitorize_vkms.remote_login_client import remove_reserved
+            try:
+                managed = remove_reserved()
+                outcomes["mon1"] = {"changed": bool(managed.get("changed"))}
+            except HelperError as error:
+                outcomes["mon1"] = {"error": str(error)}
+            helper_res["success"] = all("error" not in item for item in outcomes.values())
+            helper_res["changed"] = any(item.get("changed") for item in outcomes.values())
     except PolkitDenied as exc:
         if args.json:
             return _json_error(str(exc), "polkit_denied")

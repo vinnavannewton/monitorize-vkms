@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from monitorize_vkms.errors import HelperError, PolkitDenied
+from monitorize_vkms.errors import HelperError, PolkitDenied, ManagedDisplayError
 
 
 HELPER_PATH = Path("/usr/libexec/monitorize-vkms/monitorize-vkms-helper")
@@ -79,6 +79,8 @@ def helper_response(
     if operation == "destroy-all" and isinstance(response, dict) and isinstance(response.get("results"), dict):
         return response
     if result.returncode or not isinstance(response, dict) or not response.get("success"):
+        if isinstance(response, dict) and response.get("error_kind") == "protected_display":
+            raise ManagedDisplayError(str(response.get("message") or "Remote-login display is managed."))
         detail = ""
         if isinstance(response, dict):
             detail = str(response.get("message") or "")

@@ -28,6 +28,8 @@ if __name__ == "__main__":
 
 from monitorize_vkms.configfs import CONFIGFS_SUBSYSTEM
 
+BOOT_DISPLAY_PROTOCOL = 1
+
 INSTANCE_NAMES = {
     "mon1": "connector0",
     "mon2": "connector1",
@@ -45,6 +47,10 @@ MODULE_PATHS = {
 
 class VkmsHelperError(RuntimeError):
     pass
+
+
+class ProtectedDisplayError(VkmsHelperError):
+    error_kind = "protected_display"
 
 
 class CustomEdidUnsupported(VkmsHelperError):
@@ -629,6 +635,8 @@ def _destroy_slot(root: Path, logs: list[str], slot: str, uid: int,
                   session_id: str, env: dict[str, str], generation: str | None) -> bool:
     _instance, connector = _require_bootstrap(root, logs, slot)
     lease = _read_lease(slot)
+    if lease and lease.get("protected") is True:
+        raise ProtectedDisplayError("mon1 is managed by remote login; use its authenticated removal or Settings recovery.")
     connected = _read(connector / "status") == CONNECTOR_STATUS_CONNECTED
     if not connected:
         if lease:
@@ -659,6 +667,19 @@ def _destroy_slot(root: Path, logs: list[str], slot: str, uid: int,
     return changed
 
 
+def _select_available_slot(root: Path, logs: list[str]) -> str:
+    for candidate in INSTANCE_NAMES:
+        lease = _read_lease(candidate)
+        if lease and lease.get("protected") is True:
+            continue
+        _, connector = _require_bootstrap(root, logs, candidate)
+        if _read(connector / "status") == CONNECTOR_STATUS_DISCONNECTED:
+            if lease:
+                raise VkmsHelperError(f"{candidate} has inconsistent ownership state; refusing create.")
+            return candidate
+    raise VkmsHelperError("Both Monitorize virtual displays are occupied or reserved.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage Monitorize's fixed VKMS configfs instances.")
     parser.add_argument("operation", nargs="?", choices=("create", "create-custom", "destroy", "destroy-all", "status", "capability"))
@@ -677,8 +698,17 @@ def main() -> int:
         parser.error("an operation is required")
 
     logs: list[str] = []
-    root = _configfs_root(logs)
-    instance, connector = _require_bootstrap(root, logs)
+    try:
+        root = _configfs_root(logs)
+        instance, connector = _require_bootstrap(root, logs)
+    except VkmsHelperError as error:
+        if args.operation != "capability":
+            raise
+        from monitorize_vkms.protocols import capabilities
+        print(json.dumps(dict(success=True, api_version=1, displays=list(INSTANCE_NAMES),
+                              topology_ready=False, capability="unavailable", message=str(error),
+                              remote_login_protocols=capabilities())))
+        return 0
     changed = False
 
     response = {
@@ -694,17 +724,12 @@ def main() -> int:
             uid = int(os.environ["PKEXEC_UID"])
             session_id, env = _active_session(uid)
             if args.slot == "auto":
-                for candidate in INSTANCE_NAMES:
-                    _instance, candidate_connector = _require_bootstrap(root, logs, candidate)
-                    if _read(candidate_connector / "status") == CONNECTOR_STATUS_DISCONNECTED:
-                        if _read_lease(candidate):
-                            raise VkmsHelperError(f"{candidate} has inconsistent ownership state; refusing create.")
-                        args.slot = candidate
-                        break
-                else:
-                    raise VkmsHelperError("Both Monitorize virtual displays are occupied.")
+                args.slot = _select_available_slot(root, logs)
             instance, connector = _require_bootstrap(root, logs, args.slot)
             response["slot"] = args.slot
+            existing = _read_lease(args.slot)
+            if existing and existing.get("protected") is True:
+                raise ProtectedDisplayError("mon1 is managed by remote login and cannot be replaced by ordinary create.")
             if args.mode is not None:
                 args.mode = _validate_requested_mode(args.mode)
             if args.mode is None:
@@ -832,6 +857,8 @@ def main() -> int:
                                                                  args.generation if args.operation == "destroy" else None)}
                 except VkmsHelperError as exc:
                     results[slot] = {"error": str(exc)}
+                    if isinstance(exc, ProtectedDisplayError):
+                        results[slot]["error_kind"] = exc.error_kind
                     if args.operation == "destroy":
                         raise
             response["results"] = results
@@ -849,6 +876,8 @@ def main() -> int:
         response["api_version"] = 1
         response["displays"] = list(INSTANCE_NAMES)
         response["topology_ready"] = True
+        from monitorize_vkms.protocols import capabilities
+        response["remote_login_protocols"] = capabilities()
     elif args.operation == "status":
         displays = {}
         for slot in INSTANCE_NAMES:
@@ -858,6 +887,7 @@ def main() -> int:
                 "connector_connected": _read(selected / "status") == CONNECTOR_STATUS_CONNECTED,
                 "edid_enabled": _read(selected / "edid_enabled") == "1",
                 "edid_supported": (selected / "edid").is_file() and (selected / "edid_enabled").is_file(),
+                "protected": bool((_read_lease(slot) or {}).get("protected")),
             }
         response["displays"] = displays
         response.update(displays["mon1"])
@@ -876,5 +906,5 @@ if __name__ == "__main__":
         print(json.dumps({"success": False, "message": str(exc), "error_kind": "custom_edid_unsupported"}))
         sys.exit(1)
     except (OSError, RuntimeError, ValueError) as exc:
-        print(json.dumps({"success": False, "message": str(exc)}))
+        print(json.dumps({"success": False, "message": str(exc), "error_kind": getattr(exc, "error_kind", "helper_error")}))
         sys.exit(1)
