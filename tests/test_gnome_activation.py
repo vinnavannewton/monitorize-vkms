@@ -21,6 +21,24 @@ def state(active=True, wrong_mode=False, mirrored=False, serial=1):
 
 
 class GnomeActivationTest(unittest.TestCase):
+    def test_named_reserved_output_activates_with_second_virtual_output_present(self):
+        current=state()
+        second=('Virtual-2','Monitorize','Virtual','other')
+        physical=[*current[1],(second,current[1][1][1],{})]
+        logical=[*current[2],(4260,0,1.0,0,False,[second],{})]
+        current=(1,physical,logical,{})
+        interface=Mock()
+        with patch.object(comp,'_require_dbus',return_value=SimpleNamespace()), \
+             patch.object(comp,'_display_config_interface',return_value=interface), \
+             patch.object(comp,'_mutter_state',return_value=current), \
+             patch.object(comp.time,'sleep'):
+            ok,details,error=comp.gnome_activate_vkms({},2340,1080,60,expected_output_name='Virtual-1')
+        self.assertTrue(ok,error)
+        self.assertEqual(details['name'],'Virtual-1')
+        applied=interface.ApplyMonitorsConfig.call_args.args[2]
+        names=[str(monitor[0]) for logical in applied for monitor in logical[5]]
+        self.assertEqual(sorted(names),['DP-1','Virtual-1','Virtual-2'])
+
     def test_autoactivated_connector_is_configured_once(self):
         for active, wrong_mode in [(False, False), (True, False), (True, True)]:
             with self.subTest(active=active, wrong_mode=wrong_mode):

@@ -6,8 +6,10 @@ License: GPL-2.0-only
 URL: https://github.com/vinnavannewton/monitorize-vkms
 Source0: %{name}-%{version}.tar.gz
 BuildArch: noarch
-BuildRequires: python3
-Requires: python3, python3-dbus, python3-gobject, dkms, polkit, systemd, util-linux
+BuildRequires: python3 >= 3.11
+BuildRequires: python3-dbus, python3-gobject
+Requires: python3 >= 3.11
+Requires: python3-dbus, python3-gobject, dkms, polkit, systemd, util-linux
 
 %description
 DKMS sources and userspace services for ordinary and protected boot displays.
