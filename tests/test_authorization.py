@@ -116,3 +116,24 @@ class AuthorizationTest(unittest.TestCase):
         for uid in ('../../other', True, 0, -1):
             with self.subTest(uid=uid), self.assertRaises(ValueError):
                 auth.read(uid)
+
+    def test_legacy_mount_device_changes_do_not_invalidate_grant(self):
+        auth.set_enabled(1000,True)
+        path=self.directory/'1000.json'
+        record=json.loads(path.read_text());record['identity']['home_device']=123
+        path.write_text(json.dumps(record))
+        self.assertTrue(auth.state(1000)['unattended_enabled'])
+        self.identity.return_value=dict(uid=1000,name='test',home_inode=99)
+        self.assertFalse(auth.state(1000)['unattended_enabled'])
+        self.assertTrue(auth.state(1000)['repair_required'])
+        with self.assertRaises(auth.StaleAuthorizationError):auth.read(1000)
+
+    def test_stale_record_allows_only_explicit_polkit_fallback(self):
+        from subprocess import CompletedProcess
+        with patch.object(dbus_service.authorization,'read',side_effect=auth.StaleAuthorizationError('stale')), \
+             patch.object(dbus_service.subprocess,'run',return_value=CompletedProcess([],0)) as polkit, \
+             patch.object(dbus_service,'_execute_helper',return_value='ok'):
+            self.assertEqual(dbus_service._request(':1.1',1000,'create',['create'],True),'ok')
+            polkit.assert_called_once()
+            with self.assertRaises(auth.StaleAuthorizationError):
+                dbus_service._request(':1.1',1000,'create',['create'],False)

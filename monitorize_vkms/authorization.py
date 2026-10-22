@@ -11,6 +11,10 @@ VERSION = 1
 OWNER_UID = 0
 
 
+class StaleAuthorizationError(PermissionError):
+    """A protected record no longer identifies the current account."""
+
+
 def identity(uid):
     if type(uid) is not int or uid <= 0:
         raise ValueError('A non-root Unix user is required.')
@@ -19,7 +23,7 @@ def identity(uid):
     if home.st_uid != uid or not stat.S_ISDIR(home.st_mode):
         raise PermissionError('The user home directory must belong to that user.')
     return dict(uid=uid, name=account.pw_name, home=account.pw_dir,
-                home_device=home.st_dev, home_inode=home.st_ino)
+                home_inode=home.st_ino)
 
 
 def _directory(create=False):
@@ -47,14 +51,21 @@ def read(uid):
             raise PermissionError('Insecure VKMS authorization record.')
         record = json.load(stream)
     current = identity(uid)
+    saved=record.get('identity') if isinstance(record,dict) else None
+    # st_dev is an ephemeral mount identifier (notably on Btrfs). Old records
+    # retain it, but account/home/inode binding must survive a remount or reboot.
+    if isinstance(saved,dict):saved={k:v for k,v in saved.items() if k!='home_device'}
     if (not isinstance(record, dict) or type(record.get('version')) is not int or record.get('version') != VERSION
-            or type(record.get('enabled')) is not bool or record.get('identity') != current):
-        raise PermissionError('Invalid or stale VKMS authorization. Run setup again.')
+            or type(record.get('enabled')) is not bool or saved != {k:v for k,v in current.items() if k!='home_device'}):
+        raise StaleAuthorizationError('Invalid or stale VKMS authorization. Run setup again.')
     return record
 
 
 def state(uid):
-    record = read(uid)
+    try:record = read(uid)
+    except StaleAuthorizationError:
+        return dict(success=True,authorization_version=VERSION,unattended_enabled=False,
+                    repair_required=True,message='VKMS authorization needs renewal. Enable it again to authorize this account.')
     return dict(success=True, authorization_version=VERSION,
                 unattended_enabled=bool(record and record['enabled']))
 

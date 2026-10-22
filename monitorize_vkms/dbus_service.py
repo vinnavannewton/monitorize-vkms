@@ -41,7 +41,12 @@ def _valid_display(display: str) -> str:
 
 
 def _request(sender: str, uid: int, action: str, argv: list[str], interactive=True) -> str:
-    record = authorization.read(uid) if uid > 0 else None
+    try:record = authorization.read(uid) if uid > 0 else None
+    except authorization.StaleAuthorizationError:
+        # A stale grant never authorizes unattended operations. Explicit manual
+        # requests can still use the ordinary Polkit authorization path.
+        if not interactive:raise
+        record=None
     cleanup = action in ('destroy', 'destroy-all')
     enrolled = bool(record and record['enabled'])
     if not (enrolled or (record and cleanup)):

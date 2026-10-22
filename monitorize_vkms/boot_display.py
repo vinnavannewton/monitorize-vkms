@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import secrets
 import stat
+import time
 
 IDLE_DISPLAY_PROTOCOL = 1
 GREETER_ON_DEMAND_PROTOCOL = 1
@@ -112,18 +113,40 @@ def transfer_to_desktop(state,generation,boot_id,uid,session):
 
 
 
-def adopt_for_session(*,state,generation,boot_id,uid,session,session_resolver,connectors,activate,reactivate=False):
+def adopt_for_session(*,state,generation,boot_id,uid,session,session_resolver,connectors,activate,reactivate=False,timeout=5):
     """Caller holds lifecycle lock; resolver authenticates the live desktop."""
     lease=boot_output_status(state)
     if (not lease or lease.get('kind')!='boot' or lease.get('protected') is not True or
         lease.get('state')!='active' or lease.get('generation')!=generation or lease.get('boot_id')!=boot_id):
         raise RuntimeError('Boot-output reservation changed before adoption.')
-    actual,environment=session_resolver(uid)
-    if actual!=session:raise RuntimeError('Desktop session changed before adoption.')
-    matches=[c for c in connectors().values() if c.get('display')=='mon1' and
-             c.get('status')=='connected' and c.get('edid_sha256')==lease.get('edid_sha256')]
-    if len(matches)!=1:raise RuntimeError('Boot DRM identity is missing, changed or ambiguous.')
-    output=matches[0]
+    deadline=time.monotonic()+timeout
+    while True:
+        current=boot_output_status(state)
+        if current!=lease:
+            raise RuntimeError('Boot-output reservation changed while waiting for DRM readiness.')
+        actual,environment=session_resolver(uid)
+        if actual!=session:raise RuntimeError('Desktop session changed before adoption.')
+        outputs=list(connectors().values())
+        candidates=[c for c in outputs if c.get('display')=='mon1' or
+                    (lease.get('connector') and c.get('name')==lease['connector'] and c.get('card')==lease.get('card'))]
+        if len(candidates)>1:raise RuntimeError('Boot DRM identity is ambiguous.')
+        for candidate in candidates:
+            if candidate.get('edid_sha256') and candidate['edid_sha256']!=lease.get('edid_sha256'):
+                raise RuntimeError('Boot DRM identity changed: EDID mismatch.')
+            if lease.get('connector_id') is not None and (
+                any(lease.get(k)!=candidate.get(k) for k in ('card','connector_id')) or
+                lease.get('connector')!=candidate.get('name')):
+                raise RuntimeError('Adopted output identity changed.')
+        matches=[c for c in candidates if c.get('status')=='connected' and
+                 c.get('display')=='mon1' and c.get('edid_sha256')==lease.get('edid_sha256')]
+        if matches:
+            output=matches[0]
+            break
+        if time.monotonic()>=deadline:
+            observed=', '.join(str(c.get('name'))+':'+str(c.get('status'))+
+                ':edid='+('present' if c.get('edid_sha256') else 'pending') for c in candidates)
+            raise RuntimeError('Boot DRM readiness timed out: '+(observed or 'reserved connector not discovered'))
+        time.sleep(.1)
     if type(output.get('connector_id')) is not int or output['connector_id']<=0:
         raise RuntimeError('Boot connector has no reliable object identity.')
     if lease.get('phase') in ('desktop','desktop_idle'):
@@ -209,6 +232,31 @@ def idle_for_session(*,state,connector,generation,boot_id,uid,session,session_re
     return lease
 
 
+def release_for_session(**values):
+    """Administrator disablement only; caller proves engines exited and mode off."""
+    if values['engines_stopped'] is not True:
+        raise RuntimeError('Capture has not exited; reserved display retained.')
+    actual,_=values['session_resolver'](values['uid'])
+    if actual!=values['session']:raise RuntimeError('Active desktop session changed.')
+    lease=_reserved(values['state'],values['connector'],values['generation'],values['boot_id'])
+    # Unlike idle/reconnect, retiring a disabled reservation can cross this same
+    # account's old login session. Root already proves all engines exited.
+    if lease.get('uid') is not None and lease['uid']!=values['uid']:
+        raise RuntimeError('Reserved output belongs to another account.')
+    (Path(values['connector'])/'status').write_text('2')
+    if (Path(values['connector'])/'status').read_text().strip()!='2':
+        raise RuntimeError('Reserved output did not disconnect.')
+    actual,_=values['session_resolver'](values['uid'])
+    if actual!=values['session']:raise RuntimeError('Desktop changed before reservation release.')
+    _reserved(values['state'],values['connector'],values['generation'],values['boot_id'])
+    path=Path(values['state'])/'primary.json'
+    path.unlink()
+    fd=os.open(values['state'],os.O_RDONLY|os.O_DIRECTORY)
+    try:os.fsync(fd)
+    finally:os.close(fd)
+    return dict(success=True,changed=True)
+
+
 def reconnect_reserved(*,state,connector,generation,boot_id):
     lease=_reserved(state,connector,generation,boot_id)
     status=(Path(connector)/'status').read_text().strip()
@@ -224,16 +272,21 @@ def reconnect_reserved(*,state,connector,generation,boot_id):
 def desktop_operation_installed(uid,session,operation,*,engines_stopped=False):
     """Coordinator-only root API; fixed slot, no caller paths or requested modes."""
     from monitorize_vkms import helper
-    if os.geteuid()!=0 or operation not in ('prepare','idle'):raise RuntimeError('Invalid reserved display operation.')
+    if os.geteuid()!=0 or operation not in ('prepare','idle','release'):raise RuntimeError('Invalid reserved display operation.')
     lock=helper._acquire_lifecycle_lock()
     try:
         root=helper._configfs_root([]);_,connector=helper._require_bootstrap(root,[],'mon1')
         lease=boot_output_status(helper.STATE_DIRECTORY)
-        if not lease:raise RuntimeError('Reserved output lease is missing.')
+        if not lease:
+            if operation=='release':return dict(success=True,changed=False)
+            raise RuntimeError('Reserved output lease is missing.')
         generation=lease.get('generation');boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
         actual,env=helper._active_session(uid)
         if actual!=session:raise RuntimeError('Active desktop session changed.')
         args=dict(state=helper.STATE_DIRECTORY,connector=connector,generation=generation,boot_id=boot_id)
+        if operation=='release':
+            return release_for_session(**args,uid=uid,session=session,session_resolver=helper._active_session,
+                                       engines_stopped=engines_stopped)
         if operation=='idle':
             return idle_for_session(**args,uid=uid,session=session,session_resolver=helper._active_session,
                                     engines_stopped=engines_stopped)

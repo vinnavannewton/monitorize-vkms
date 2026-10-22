@@ -34,7 +34,9 @@ def _recovery():
     result=subprocess.run([pkexec,str(helper),'--remote-login','remove'],capture_output=True,text=True,timeout=30)
     try:
         values=json.loads(result.stdout.strip())
-        if result.returncode or not values.get('success'):raise ValueError()
-        return values
+        if not isinstance(values,dict):raise ValueError()
     except (ValueError,TypeError):
-        raise HelperError('Administrator recovery could not remove the reserved display; ensure feature engines have exited and retry.') from None
+        raise HelperError('Administrator recovery did not return a valid result; check authorization and the installed helper.') from None
+    if result.returncode or not values.get('success'):
+        raise HelperError(str(values.get('message') or 'Administrator recovery failed; check authorization and retry.'))
+    return values

@@ -90,6 +90,40 @@ class AdoptionTests(unittest.TestCase):
                   connectors=lambda:{'Virtual-4':drm},activate=lambda *args:calls.append(args) or {'desktop':'kde'})
         return adopt_for_session,args,calls,drm
 
+    def test_adopt_waits_for_hotplug_status_and_edid(self):
+        adopt,args,calls,drm=self.adoption_context()
+        pending=dict(drm,status='disconnected',display=None,edid_sha256=None)
+        samples=iter([{'Virtual-4':pending},{'Virtual-4':dict(drm,edid_sha256=None)}, {'Virtual-4':drm}])
+        args['connectors']=lambda:next(samples)
+        with patch('monitorize_vkms.boot_display.time.sleep'):
+            self.assertEqual(adopt(**args)['phase'],'desktop')
+        self.assertEqual(len(calls),1)
+
+    def test_adopt_readiness_timeout_does_not_activate(self):
+        adopt,args,calls,drm=self.adoption_context()
+        drm.update(status='disconnected',display=None,edid_sha256=None)
+        with self.assertRaisesRegex(RuntimeError,'readiness timed out'):
+            adopt(**args,timeout=0)
+        self.assertFalse(calls)
+
+    def test_adopt_rechecks_session_while_waiting(self):
+        adopt,args,calls,drm=self.adoption_context()
+        drm.update(status='disconnected',display=None,edid_sha256=None)
+        sessions=iter([('s1',{}),('changed',{})])
+        args['session_resolver']=lambda uid:next(sessions)
+        with patch('monitorize_vkms.boot_display.time.sleep'):
+            with self.assertRaisesRegex(RuntimeError,'session changed'):
+                adopt(**args)
+        self.assertFalse(calls)
+
+    def test_adopt_changed_edid_is_not_retried(self):
+        adopt,args,calls,drm=self.adoption_context();drm['edid_sha256']='changed'
+        with patch('monitorize_vkms.boot_display.time.sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError,'identity changed'):
+                adopt(**args)
+            sleep.assert_not_called()
+        self.assertFalse(calls)
+
     def test_adopt_binds_complete_drm_identity_without_disconnect(self):
         adopt,args,calls,drm=self.adoption_context();lease=adopt(**args)
         self.assertEqual(lease['connector'],'Virtual-4');self.assertEqual(lease['connector_id'],45)
