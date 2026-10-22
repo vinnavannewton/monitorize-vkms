@@ -303,42 +303,27 @@ def _lease_path(slot: str) -> Path:
 
 
 def _read_lease(slot: str = "mon1") -> dict | None:
-    path = _lease_path(slot)
+    from monitorize_vkms.lease import read_lease
     try:
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
-            raise VkmsHelperError("Monitorize VKMS ownership state has unsafe permissions.")
-        value = json.loads(path.read_text())
-        return value if isinstance(value, dict) else None
-    except FileNotFoundError:
-        return None
+        return read_lease(STATE_DIRECTORY, slot)
     except (OSError, ValueError) as exc:
         raise VkmsHelperError(f"Could not safely read Monitorize VKMS ownership state: {exc}") from exc
 
 
 def _write_lease(lease: dict, slot: str = "mon1") -> None:
-    path = _lease_path(slot)
+    from monitorize_vkms.lease import write_lease
     try:
-        STATE_DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
-        info = STATE_DIRECTORY.lstat()
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
-            raise VkmsHelperError("Monitorize VKMS runtime state directory has unsafe ownership or permissions.")
-        temporary = STATE_DIRECTORY / f".{slot}.{secrets.token_hex(8)}.tmp"
-        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "w") as stream:
-            json.dump(lease, stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except OSError as exc:
+        write_lease(STATE_DIRECTORY, slot, lease)
+    except (OSError, ValueError) as exc:
         raise VkmsHelperError(f"Could not persist Monitorize VKMS ownership state: {exc}") from exc
 
 
 def _remove_lease(slot: str = "mon1") -> None:
+    from monitorize_vkms.lease import remove_lease
     try:
-        _lease_path(slot).unlink()
-    except FileNotFoundError:
-        pass
+        remove_lease(STATE_DIRECTORY, slot)
+    except (OSError, ValueError) as exc:
+        raise VkmsHelperError(f"Could not remove Monitorize VKMS ownership state: {exc}") from exc
 
 
 def _lease_matches_request(lease: dict | None, *, uid: int, session: str, boot_id: str,
