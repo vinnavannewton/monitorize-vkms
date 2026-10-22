@@ -116,6 +116,10 @@ def _active_session(uid: int) -> tuple[str, dict[str, str]]:
             env["XDG_SESSION_TYPE"] = values.get("Type", "")
             if values.get("Desktop"):
                 env.setdefault("XDG_CURRENT_DESKTOP", values["Desktop"])
+            if values.get("Type") in {"wayland", "x11"} and not env.get("XDG_CURRENT_DESKTOP"):
+                desktop = _session_desktop(uid, session)
+                if desktop:
+                    env["XDG_CURRENT_DESKTOP"] = desktop
             known_dbus_desktop = any(
                 name in env.get("XDG_CURRENT_DESKTOP", "").lower()
                 for name in ("kde", "plasma", "gnome", "cinnamon")
@@ -194,6 +198,31 @@ def _process_in_session(process: Path, uid: int, session: str) -> bool:
     # User-service terminals may live outside the session scope. Their inherited
     # session ID must still identify the already verified active local session.
     return f"XDG_SESSION_ID={session}".encode() in process.joinpath("environ").read_bytes().split(b"\0")
+
+
+def _session_desktop(uid: int, session: str) -> str:
+    """Recover desktop metadata only from the verified user's session processes."""
+    # GDM's root-owned session leader can predate desktop environment setup.
+    # GNOME session processes still carry the desktop name even when logind's
+    # Desktop property is empty. Socket servers may live in user services, so
+    # identify the D-Bus desktop before attempting strict socket discovery.
+    processes = [path for path in Path("/proc").iterdir() if path.name.isdigit()]
+    if len(processes) > 16384:
+        raise VkmsHelperError("Too many processes to safely resolve the desktop session.")
+    desktops: set[str] = set()
+    for process in processes:
+        try:
+            if not _process_in_session(process, uid, session):
+                continue
+            values = _parse_session_environment(process.joinpath("environ").read_bytes())
+            desktop = values.get("XDG_CURRENT_DESKTOP", "")
+            if desktop:
+                desktops.add(desktop)
+        except (OSError, ValueError):
+            continue
+    if len(desktops) > 1:
+        raise VkmsHelperError("Could not uniquely resolve desktop metadata from the active session.")
+    return next(iter(desktops), "")
 
 
 def _validate_session_socket(path: Path, uid: int, session: str) -> int:
