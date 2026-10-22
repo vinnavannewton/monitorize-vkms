@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -9,12 +11,16 @@ import pwd
 import secrets
 import stat
 import subprocess
+import time
 
 from .boot_policy import MODE, validate_protected
 from .edid import generate_edid
 from .lease import read_lease, write_lease
+from .drm import monitorize_drm_connectors as discover
 
 ENROLLMENT = Path('/etc/monitorize/remote-login.json')
+CGROUP_ROOT = Path('/sys/fs/cgroup')
+IDENTITY_ROOT = Path('/var/lib/monitorize/remote-login')
 
 
 def require_installed(path: Path) -> None:
@@ -122,3 +128,206 @@ def reserve_boot_output(*, state: Path, connector: Path, uid: int,
     value['state'] = 'reserved'
     write_lease(state, 'mon1', value)
     return value
+
+
+def _same_output(lease: dict, output: dict) -> None:
+    if (output.get('display') != 'mon1' or output.get('edid_sha256') != lease['edid_sha256']
+            or type(output.get('connector_id')) is not int or output['connector_id'] <= 0
+            or any(lease.get(key) is not None and lease[key] != output.get(target)
+                   for key, target in (('connector', 'name'), ('card', 'card'), ('connector_id', 'connector_id')))):
+        raise PermissionError('Reserved DRM connector identity changed.')
+
+
+def _output(lease: dict) -> dict:
+    matches = [value for value in discover().values() if value.get('display') == 'mon1']
+    if len(matches) != 1:
+        raise RuntimeError('The exact reserved DRM output is not available.')
+    _same_output(lease, matches[0])
+    return matches[0]
+
+
+def set_status(connector: Path, value: str) -> None:
+    connector_ready(connector)
+    if value not in ('1', '2'):
+        raise ValueError('Invalid connector status.')
+    fd = os.open(connector / 'status', os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC)
+    with os.fdopen(fd, 'w') as target:
+        target.write(value)
+
+
+def reconnect_reserved(*, state: Path, generation: str, boot_id: str, connector: Path) -> dict:
+    """Connect only the already-owned reservation; caller holds the lifecycle lock."""
+    value = read_lease(state, 'mon1')
+    validate_protected(value)
+    if value['generation'] != generation or value['boot_id'] != boot_id or value['state'] == 'released':
+        raise PermissionError('Remote-login reservation is stale.')
+    connector_ready(connector)
+    if hashlib.sha256((connector / 'edid').read_bytes()).hexdigest() != value['edid_sha256']:
+        raise PermissionError('Reserved configfs EDID changed.')
+    if (connector / 'status').read_text().strip() == '1':
+        _output(value)
+    value['state'] = 'pending'
+    write_lease(state, 'mon1', value)
+    set_status(connector, '1')
+    return value
+
+
+def prepare_reserved(*, state: Path, connector: Path, lease: dict, activate,
+                     context_check) -> dict:
+    """Connect, run the verified compositor worker, then verify exact enabled output."""
+    context_check()
+    started = time.monotonic()
+    value = reconnect_reserved(state=state, generation=lease['generation'],
+                               boot_id=lease['boot_id'], connector=connector)
+    deadline = started + 10
+    while True:
+        context_check()
+        try:
+            output = _output(value)
+            break
+        except PermissionError:
+            raise
+        except RuntimeError:
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Reserved DRM connector did not appear before the deadline.')
+            time.sleep(0.1)
+    value.update(connector=output['name'], card=output['card'], connector_id=output['connector_id'])
+    write_lease(state, 'mon1', value)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError('Reserved output activation timed out.')
+    result = activate(output, remaining)
+    context_check()
+    current = _output(value)
+    details = result.get('details', {}) if isinstance(result, dict) else {}
+    if (time.monotonic() > deadline or not isinstance(result, dict) or result.get('success') is not True
+            or details.get('width') != 1920 or details.get('height') != 1080
+            or type(details.get('refresh_rate')) not in (int, float)
+            or abs(details['refresh_rate'] - 60) > 0.75
+            or current.get('status') != 'connected'
+            or (Path(current['path']) / 'enabled').read_text().strip() != 'enabled'):
+        raise RuntimeError('Reserved output is not verified enabled at 1920x1080@60.')
+    value['state'] = 'active'
+    write_lease(state, 'mon1', value)
+    return value
+
+
+def idle_reserved(*, state: Path, connector: Path, lease: dict) -> dict:
+    """Caller holds lifecycle and identity locks and has verified capture exit."""
+    validate_protected(lease)
+    connector_ready(connector)
+    if hashlib.sha256((connector / 'edid').read_bytes()).hexdigest() != lease['edid_sha256']:
+        raise PermissionError('Reserved configfs EDID changed.')
+    if (connector / 'status').read_text().strip() == '1':
+        _output(lease)
+    value = dict(lease, state='pending')
+    write_lease(state, 'mon1', value)
+    # Unlike ordinary remove, the protected lifecycle may unplug its sole output.
+    # Kernel hotplug removes this connector from the compositor while retaining
+    # registration and EDID. No physical output layout is rewritten here.
+    set_status(connector, '2')
+    if (connector / 'status').read_text().strip() != '2':
+        raise RuntimeError('Reserved display did not disconnect.')
+    value['state'] = 'reserved'
+    write_lease(state, 'mon1', value)
+    return value
+
+
+def unit_properties(unit: str) -> dict:
+    result = subprocess.run(['/usr/bin/systemctl', 'show', unit, '--no-pager',
+                             '--property=MainPID', '--property=ControlGroup',
+                             '--property=ActiveState', '--property=LoadState'],
+                            capture_output=True, text=True, timeout=3, check=True)
+    if len(result.stdout) > 8192:
+        raise RuntimeError('Unexpected systemd unit response.')
+    return dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+
+
+def runner_identity(pid: int, uid: int, phase: str) -> bool:
+    try:
+        process = Path('/proc') / str(pid)
+        executable = (process / 'exe').resolve(strict=True)
+        require_installed(executable)
+        args = (process / 'cmdline').read_bytes().split(b'\0')
+        return (process.stat().st_uid == uid and executable.name.startswith('python3')
+                and args[1:] == [b'-I', b'/usr/libexec/monitorize/remote-login/entry.py',
+                                  phase.encode(), b''])
+    except (OSError, ValueError):
+        return False
+
+
+def verify_engine_cgroups(uid: int) -> None:
+    for phase in ('boot', 'desktop'):
+        unit = unit_properties(f'monitorize-remote-login-{phase}@{uid}.service')
+        if unit.get('LoadState') == 'not-found':
+            continue
+        pid = int(unit.get('MainPID', '-1'))
+        group = unit.get('ControlGroup', '')
+        if pid == 0 and unit.get('ActiveState') in ('inactive', 'failed') and not group:
+            continue
+        if pid <= 0 and unit.get('ActiveState') not in ('inactive', 'failed'):
+            raise RuntimeError('Managed engine has no reliable runner PID.')
+        if (not group.startswith('/') or group == '/' or '..' in group.split('/')
+                or '//' in group):
+            raise ValueError('Cannot verify managed capture cgroup.')
+        directory = CGROUP_ROOT / group.lstrip('/')
+        # A vanished cgroup is acceptable only for a stopped unit.
+        if not directory.exists() and pid == 0 and unit.get('ActiveState') in ('inactive', 'failed'):
+            continue
+        processes = set()
+        paths = [directory / 'cgroup.procs', *directory.rglob('cgroup.procs')]
+        if len(paths) > 1024:
+            raise RuntimeError('Too many managed capture cgroups.')
+        for path in paths:
+            processes.update(int(value) for value in path.read_text().split())
+        if pid == 0 and unit.get('ActiveState') in ('inactive', 'failed') and not processes:
+            continue
+        if pid <= 0 or processes != {pid}:
+            raise RuntimeError('Capture processes remain; output retained.')
+        if not runner_identity(pid, uid, phase):
+            raise PermissionError('Managed engine runner identity changed.')
+
+
+@contextmanager
+def quiescent(uid: int):
+    """Hold the authoritative identity lock across a verified idle/release mutation."""
+    require_installed(IDENTITY_ROOT)
+    directory = IDENTITY_ROOT / str(uid)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_mode & 0o077:
+        raise PermissionError('Unsafe managed engine identity directory.')
+    parent = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        fd = os.open('engine.lock', os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                     dir_fd=parent)
+    finally:
+        os.close(parent)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_nlink != 1 or info.st_mode & 0o077:
+            raise PermissionError('Unsafe managed engine identity lock.')
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        verify_engine_cgroups(uid)
+        yield
+        verify_engine_cgroups(uid)
+    finally:
+        os.close(fd)
+
+
+def verify_quiescent(uid: int) -> None:
+    with quiescent(uid):
+        pass
+
+
+def greeter_context() -> tuple[int, str]:
+    sessions = local_sessions()
+    no_seat_owner(sessions, allow_greeter=True)
+    candidates = [row for row in sessions if row.get('seat') == 'seat0' and row.get('class') == 'greeter']
+    if len(candidates) != 1 or type(candidates[0].get('uid')) is not int:
+        raise PermissionError('A unique active local greeter is required.')
+    row = candidates[0]
+    from . import helper
+    session, environment = helper._active_session(row['uid'])
+    if session != row.get('session') or environment.get('XDG_SESSION_TYPE') != 'wayland':
+        raise PermissionError('The graphical greeter changed.')
+    return row['uid'], session
