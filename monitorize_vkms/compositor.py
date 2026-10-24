@@ -261,6 +261,24 @@ def _wait_for_new_vkms_connector(
     )
 
 
+def _wait_for_expected_vkms_connector(name, display_config, attempts=40, delay=WAIT_DELAY):
+    """Resolve only the DRM-verified target, including previously present outputs."""
+    if not re.fullmatch(r"Virtual-[0-9]+", name):
+        return "", None, "Invalid expected VKMS connector"
+    for attempt in range(attempts):
+        state=_mutter_state(display_config)
+        matches=[monitor for monitor in state[1] if _connector_name(monitor)==name]
+        if len(matches)>1:return "", None, "Mutter returned ambiguous connector identity for "+name
+        if matches:return name, state, ""
+        if attempt+1<attempts:time.sleep(delay)
+    return "", None, "Mutter did not expose the exact reserved connector "+name
+
+
+def _preserved_identities_match(state, before, target):
+    current=physical_monitor_identities(state)
+    return all(current.get(name)==tuple(identity) for name,identity in before.items() if name!=target)
+
+
 def _variant_dict(dbus, values=None):
     values = values or {}
     if hasattr(dbus, "Dictionary"):
@@ -732,17 +750,23 @@ def gnome_activate_vkms(
     dbus = _require_dbus()
     display_config = display_config or _display_config_interface(dbus=dbus)
 
-    connector, state, error = _wait_for_new_vkms_connector(
-        before_identities, width, height, display_config
-    )
+    if expected_output_name:
+        connector, state, error = _wait_for_expected_vkms_connector(expected_output_name, display_config)
+    else:
+        connector, state, error = _wait_for_new_vkms_connector(
+            before_identities, width, height, display_config
+        )
     if not connector:
         return False, {}, error
     if expected_output_name and connector != expected_output_name:
         return False, {}, f"{compositor_name} reported unexpected connector {connector}"
 
+    preserved=before_identities or physical_monitor_identities(state)
     for apply_attempt in range(VKMS_APPLY_RETRIES):
         if apply_attempt > 0:
             state = _mutter_state(display_config)
+        if not _preserved_identities_match(state,preserved,connector):
+            return False, {}, "Existing screen identity changed during VKMS activation"
         if sum(_connector_name(monitor) == connector for monitor in state[1]) != 1:
             return False, {}, f"{compositor_name} returned ambiguous connector identity for {connector}"
         payload, details, error = _build_vkms_activation_config(
@@ -789,6 +813,8 @@ def gnome_activate_vkms(
 
         for _attempt in range(VKMS_ACTIVATION_ATTEMPTS):
             current = _mutter_state(display_config)
+            if not _preserved_identities_match(current,preserved,connector):
+                return False, {}, "Existing screen identity changed during VKMS activation"
             if sum(_connector_name(monitor) == connector for monitor in current[1]) != 1:
                 return False, {}, f"{compositor_name} connector identity changed during activation"
             mode = _active_output_modes(current, display_config).get(connector)

@@ -11,6 +11,39 @@ from monitorize_vkms import helper
 
 
 class SessionDiscoveryTests(unittest.TestCase):
+    def test_missing_desktop_recovers_gnome_from_session_process(self):
+        properties = "Active=yes\nRemote=no\nType=wayland\nDesktop=\nLeader=0\nUser=1000\n"
+        raw = b"XDG_CURRENT_DESKTOP=GNOME\0XDG_SESSION_ID=3\0"
+        with patch.object(helper.shutil, "which", return_value="/usr/bin/loginctl"), \
+             patch.object(helper.subprocess, "run", side_effect=[
+                 SimpleNamespace(stdout="3"), SimpleNamespace(stdout=properties)]), \
+             patch.object(helper.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir="/home/test", pw_name="test")), \
+             patch.object(Path, "iterdir", return_value=iter([Path("/proc/10")])), \
+             patch.object(Path, "read_bytes", side_effect=[b"", raw]), \
+             patch.object(helper, "_process_in_session", return_value=True), \
+             patch.object(helper, "_session_connection_environment") as resolve, \
+             patch.object(helper, "_validate_session_socket") as validate:
+            session, env = helper._active_session(1000)
+        self.assertEqual(session, "3")
+        self.assertEqual(env["XDG_CURRENT_DESKTOP"], "GNOME")
+        resolve.assert_not_called()
+        validate.assert_not_called()
+
+    def test_desktop_recovery_ignores_processes_outside_session(self):
+        with patch.object(Path, "iterdir", return_value=iter([Path("/proc/10")])), \
+             patch.object(helper, "_process_in_session", return_value=False), \
+             patch.object(Path, "read_bytes") as read:
+            self.assertEqual(helper._session_desktop(1000, "3"), "")
+        read.assert_not_called()
+
+    def test_desktop_recovery_rejects_conflicting_metadata(self):
+        with patch.object(Path, "iterdir", return_value=iter([Path("/proc/10"), Path("/proc/11")])), \
+             patch.object(helper, "_process_in_session", return_value=True), \
+             patch.object(Path, "read_bytes", side_effect=[
+                 b"XDG_CURRENT_DESKTOP=GNOME\0", b"XDG_CURRENT_DESKTOP=KDE\0"]):
+            with self.assertRaisesRegex(helper.VkmsHelperError, "desktop metadata"):
+                helper._session_desktop(1000, "3")
+
     def test_session_process_membership_checks_owner_and_exact_session(self):
         with TemporaryDirectory() as directory:
             process = Path(directory)

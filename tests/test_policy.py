@@ -28,7 +28,13 @@ class TestPolkitPolicy(unittest.TestCase):
             "capability": "yes",
         }
 
-        self.assertEqual(set(actions), {ACTION_PREFIX + name for name in expected})
+        self.assertEqual(set(actions), {ACTION_PREFIX + name for name in expected} | {ACTION_PREFIX+'authorization'})
+        grant=actions[ACTION_PREFIX+'authorization']
+        self.assertEqual(grant.findtext('defaults/allow_active'),'auth_admin')
+        self.assertEqual(grant.findtext('defaults/allow_inactive'),'no')
+        self.assertEqual(grant.findtext('defaults/allow_any'),'no')
+        annotations={item.attrib['key']:item.text for item in grant.findall('annotate')}
+        self.assertEqual(annotations['org.freedesktop.policykit.exec.path'],'/usr/libexec/monitorize-vkms/monitorize-vkms-authorization')
         for operation, active_default in expected.items():
             with self.subTest(operation=operation):
                 action = actions[ACTION_PREFIX + operation]

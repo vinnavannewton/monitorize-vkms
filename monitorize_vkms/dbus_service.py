@@ -33,14 +33,21 @@ def _valid_display(display: str) -> str:
     return display
 
 
-def _request(sender: str, uid: int, action: str, argv: list[str]) -> str:
-    authorization = subprocess.run(
-        ["/usr/bin/pkcheck", "--action-id", ACTION_PREFIX + action,
-         "--system-bus-name", sender, "--allow-user-interaction"],
-        capture_output=True, text=True, timeout=90, check=False,
-    )
-    if authorization.returncode:
-        raise PermissionError("Polkit denied the Monitorize VKMS request.")
+def _request(sender: str, uid: int, action: str, argv: list[str], *, unattended=False) -> str:
+    if unattended:
+        if action!='create' or argv[0]!='create':raise PermissionError('Unsupported unattended operation.')
+        from monitorize_vkms.authorization import require_grant
+        from monitorize_vkms.helper import _active_session
+        require_grant(uid)
+        _active_session(uid)
+    else:
+        authorization = subprocess.run(
+            ["/usr/bin/pkcheck", "--action-id", ACTION_PREFIX + action,
+             "--system-bus-name", sender, "--allow-user-interaction"],
+            capture_output=True, text=True, timeout=90, check=False,
+        )
+        if authorization.returncode:
+            raise PermissionError("Polkit denied the Monitorize VKMS request.")
     environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "PKEXEC_UID": str(uid)}
     result = subprocess.run(
         [sys.executable, "-I", str(HELPER), *argv],
@@ -75,7 +82,7 @@ class MonitorizeVkmsService(dbus.service.Object):
         self.name = dbus.service.BusName(BUS_NAME, bus=bus, do_not_queue=True)
         super().__init__(bus, OBJECT_PATH)
 
-    def _dispatch(self, sender: str, action: str, argv: list[str], reply, error) -> None:
+    def _dispatch(self, sender: str, action: str, argv: list[str], reply, error, *, unattended=False) -> None:
         # The unique bus sender, rather than any caller-supplied UID, is the
         # subject of both the Polkit check and the lifecycle ownership record.
         try:
@@ -92,8 +99,26 @@ class MonitorizeVkmsService(dbus.service.Object):
             else:
                 GLib.idle_add(reply, result)
 
-        future = POOL.submit(_request, sender, uid, action, argv)
+        future = POOL.submit(_request, sender, uid, action, argv, unattended=unattended)
         future.add_done_callback(finished)
+
+    @dbus.service.method(INTERFACE, in_signature="", out_signature="s", sender_keyword="sender")
+    def GetAuthorizationState(self, sender=None):
+        from monitorize_vkms.authorization import get_state
+        return json.dumps(get_state(int(self.bus.get_unix_user(sender))))
+
+    @dbus.service.method(INTERFACE, in_signature="siid", out_signature="s", sender_keyword="sender",
+                         async_callbacks=("reply", "error"))
+    def CreateDisplayUnattended(self, display, width, height, refresh, reply, error, sender=None):
+        try:
+            display=_valid_display(str(display))
+            import math
+            if not (1<=width<=4095 and 1<=height<=4095 and math.isfinite(refresh) and 24<=refresh<=240):
+                raise ValueError('Requested display mode is out of range.')
+        except (ValueError,TypeError) as exc:
+            error(dbus.DBusException(str(exc)));return
+        self._dispatch(sender,'create',['create','--slot',display,'--mode',str(width),str(height),str(refresh)],
+                       reply,error,unattended=True)
 
     @dbus.service.method(INTERFACE, in_signature="", out_signature="s", sender_keyword="sender",
                          async_callbacks=("reply", "error"))

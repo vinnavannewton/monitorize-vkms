@@ -38,7 +38,7 @@ class CinnamonWaylandTest(unittest.TestCase):
         interface.GetCurrentState.return_value = state()
         with (
             patch.object(comp, "_require_dbus", return_value=SimpleNamespace()),
-            patch.object(comp, "_wait_for_new_vkms_connector", return_value=("Virtual-1", state(), "")),
+            patch.object(comp, "_wait_for_expected_vkms_connector", return_value=("Virtual-1", state(), "")),
         ):
             ok, details, message = comp.gnome_activate_vkms(
                 {}, 2340, 1080, 60,
@@ -55,7 +55,7 @@ class CinnamonWaylandTest(unittest.TestCase):
         interface.GetCurrentState.return_value = state()
         with (
             patch.object(comp, "_require_dbus", return_value=SimpleNamespace()),
-            patch.object(comp, "_wait_for_new_vkms_connector", return_value=("Virtual-1", state(False), "")),
+            patch.object(comp, "_wait_for_expected_vkms_connector", return_value=("Virtual-1", state(False), "")),
         ):
             ok, _, message = comp.gnome_activate_vkms(
                 {}, 2340, 1080, 60,

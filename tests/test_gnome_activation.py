@@ -54,3 +54,47 @@ class GnomeActivationTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ExactGnomeActivationTest(unittest.TestCase):
+    def vm_state(self, active=False):
+        old=state(active=active)
+        physical=list(old[1])
+        # The existing QEMU monitor also has a Virtual-* name and the same mode.
+        real=('Virtual-9','RHT','QEMU Monitor','existing')
+        physical[0]=(real,[('real-mode',2340,1080,60.0,1.0,[1.0],{'is-current':True})],{})
+        logical=[(0,0,1.0,0,True,[real],{})]
+        if active:logical.append((2340,0,1.0,0,False,[physical[1][0]],{}))
+        return old[0],physical,logical,{}
+
+    def test_exact_target_ignores_ambiguous_virtual_named_vm_screen_and_preserves_layout(self):
+        interface=Mock();pending=self.vm_state(False);active=self.vm_state(True)
+        before=comp.physical_monitor_identities((pending[0],[pending[1][0]],pending[2],{}))
+        with patch.object(comp,'_require_dbus',return_value=SimpleNamespace()),patch.object(comp,'_mutter_state',side_effect=[pending,active]),patch.object(comp,'_wait_for_new_vkms_connector',side_effect=AssertionError('must not guess')):
+            ok,details,error=comp.gnome_activate_vkms(before,2340,1080,60,display_config=interface,expected_output_name='Virtual-1')
+        self.assertTrue(ok,error);self.assertEqual(details['name'],'Virtual-1')
+        payload=interface.ApplyMonitorsConfig.call_args.args[2]
+        self.assertEqual(payload[0][:5],pending[2][0][:5])
+        self.assertEqual(payload[0][5][0][:2],('Virtual-9','real-mode'))
+        self.assertEqual(payload[1][5][0][0],'Virtual-1')
+
+    def test_exact_target_can_be_reactivated_without_a_new_connector(self):
+        initial=self.vm_state(False);active=self.vm_state(True)
+        interface=Mock()
+        with patch.object(comp,'_require_dbus',return_value=SimpleNamespace()),patch.object(comp,'_mutter_state',side_effect=[initial,active]):
+            ok,_,error=comp.gnome_activate_vkms(comp.physical_monitor_identities(initial),2340,1080,60,display_config=interface,expected_output_name='Virtual-1')
+        self.assertTrue(ok,error)
+
+    def test_missing_or_duplicate_target_does_not_choose_other_monitor(self):
+        value=self.vm_state(False)
+        for target,physical in [('Virtual-77',value[1]),('Virtual-1',value[1]+[value[1][1]])]:
+            with self.subTest(target=target),patch.object(comp,'_mutter_state',return_value=(value[0],physical,value[2],{})),patch.object(comp.time,'sleep'):
+                name,_,error=comp._wait_for_expected_vkms_connector(target,Mock(),attempts=2)
+                self.assertFalse(name);self.assertTrue(error)
+
+    def test_existing_screen_replacement_is_rejected_before_applying(self):
+        pending=self.vm_state(False);interface=Mock()
+        before={'Virtual-9':('Virtual-9','different','screen','identity')}
+        with patch.object(comp,'_require_dbus',return_value=SimpleNamespace()),patch.object(comp,'_mutter_state',return_value=pending):
+            ok,_,error=comp.gnome_activate_vkms(before,2340,1080,60,display_config=interface,expected_output_name='Virtual-1')
+        self.assertFalse(ok);self.assertIn('identity changed',error);interface.ApplyMonitorsConfig.assert_not_called()

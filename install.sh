@@ -25,6 +25,7 @@ readonly HELPER_SOURCE="${REPOSITORY_DIR}/monitorize_vkms/helper.py"
 readonly HELPER_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-helper"
 readonly DBUS_SOURCE="${REPOSITORY_DIR}/monitorize_vkms/dbus_service.py"
 readonly DBUS_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service"
+readonly AUTHORIZATION_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-authorization"
 readonly DBUS_UNIT_SOURCE="${REPOSITORY_DIR}/systemd/monitorize-vkms.service"
 readonly DBUS_UNIT_PATH="/etc/systemd/system/monitorize-vkms.service"
 readonly DBUS_ACTIVATION_SOURCE="${REPOSITORY_DIR}/packaging/io.github.vinnavannewton.MonitorizeVkms1.service"
@@ -412,6 +413,7 @@ install_cli_and_tools() {
 	log "Installing standalone CLI, helper, and Polkit policy"
 	install -D -o root -g root -m 0755 "$HELPER_SOURCE" "$HELPER_PATH"
 	install -D -o root -g root -m 0755 "$DBUS_SOURCE" "$DBUS_PATH"
+	install -D -o root -g root -m 0755 "${REPOSITORY_DIR}/monitorize_vkms/authorization.py" "$AUTHORIZATION_PATH"
 	install -D -o root -g root -m 0644 "$DBUS_UNIT_SOURCE" "$DBUS_UNIT_PATH"
 	install -D -o root -g root -m 0644 "$DBUS_ACTIVATION_SOURCE" "$DBUS_ACTIVATION_PATH"
 	install -D -o root -g root -m 0644 "$DBUS_POLICY_SOURCE" "$DBUS_POLICY_PATH"
@@ -456,7 +458,7 @@ backup_one_target() {
 backup_install_targets() {
 	local target version module_file module_directory target_kernel
 	for target in "$MODPROBE_CONFIG" "$CONFIG_BACKUP" "$BOOTSTRAP_PATH" "$BOOTSTRAP_UNIT_PATH" \
-		"$HELPER_PATH" "$DBUS_PATH" "$DBUS_UNIT_PATH" "$DBUS_ACTIVATION_PATH" "$DBUS_POLICY_PATH" "$DBUS_INTERFACE_PATH" \
+		"$HELPER_PATH" "$DBUS_PATH" "$AUTHORIZATION_PATH" "$DBUS_UNIT_PATH" "$DBUS_ACTIVATION_PATH" "$DBUS_POLICY_PATH" "$DBUS_INTERFACE_PATH" \
 		"$POLKIT_POLICY_PATH" "$CLI_PATH" "$PYTHON_LIB_DIR" "$SOURCE_DIR" \
 		"/var/lib/dkms/${PACKAGE_NAME}"; do
 		backup_one_target "$target"
