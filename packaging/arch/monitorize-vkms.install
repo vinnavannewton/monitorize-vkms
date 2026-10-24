@@ -1,0 +1,11 @@
+_maintenance() {
+    /usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/package_maintenance.py "$@"
+}
+pre_upgrade() { _maintenance pre-upgrade --target-version "$1"; }
+pre_remove() { _maintenance pre-remove; }
+post_install() { _maintenance post-install; }
+post_upgrade() { _maintenance post-install; }
+post_remove() {
+    dkms remove -m monitorize-vkms -v "${1%-*}" --all
+    systemctl daemon-reload
+}

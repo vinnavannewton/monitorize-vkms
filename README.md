@@ -2,6 +2,30 @@
 
 Standalone virtual display tool and out-of-tree VKMS kernel module for Linux.
 
+Remote-login host support is implemented in the 0.3.0 development tree. It reserves
+mon1 at 1920x1080@60 without connecting it at boot, and provides protected on-demand
+greeter/desktop lifecycle operations to Monitorize. Ordinary display creation remains
+available without enrollment. GNOME/GDM live boot and headless acceptance is pending;
+protocol availability is not a claim that every display manager has been validated.
+
+Native host package recipes are in `packaging/arch`, `packaging/deb/debian`, and
+`packaging/rpm`. The common staging command is
+`python3 scripts/stage-host-assets.py --destdir /tmp/monitorize-host-package --dkms`.
+Arch: run `makepkg` from `packaging/arch` with the required dependencies installed.
+DEB: copy `packaging/deb/debian` to the release tree's `debian` directory and run
+`dpkg-buildpackage` in a matching Debian/Ubuntu build environment. RPM: create a
+`monitorize-vkms-0.3.0.tar.gz` release source archive and build with the supplied spec.
+Install kernel headers matching the target kernel before installing a host package.
+Packages build/install the module through DKMS; they do not unload the running GPU.
+Reboot to initialize the persistent topology when first installing the host.
+
+The host package owns Python/helpers, bootstrap, policies, DKMS sources and
+`/usr/share/monitorize-vkms/capabilities.json`. Monitorize's app package owns remote
+login units and enrollment. Portable app binaries need these native system packages.
+Installing packages does not enroll remote login. Before replacing/removing an
+enrolled host, disable remote login in Settings and release its reservation; pairing
+is retained. The Arch transaction guard rejects replacement while ownership is active.
+
 `monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates, complete with dynamic EDID generation and desktop layout integration for validated backends.
 
 It can be used as a **standalone CLI tool** or as the backend for [project-monitorize](https://github.com/vinnavannewton/project-monitorize).
@@ -228,3 +252,45 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 - **Failure Rollback**: Installation failures trigger rollback of installer-managed changes and restoration of saved state. If rollback is incomplete, the installer reports it and preserves recovery snapshots.
 
 ---
+
+### One-time unattended authorization (local implementation)
+
+The host service supports administrator-approved enrollment for a Unix user.
+Monitorize's setup offers **Enable unattended VKMS displays**, and Settings offers
+Enable/Disable. After enrollment, that user's service requests can create bounded
+`mon1`/`mon2` displays without recurring password prompts. Other processes running
+as the same user have the same restricted access; this does not identify one
+particular Python application. No password is stored.
+
+For an existing installation, stop Monitorize sessions, update with this checkout's
+`sudo ./install.sh`, then restart `monitorize-vkms.service` before testing the new
+API. The installer may perform its normal DKMS verification/build and reboot
+requirements; these authorization changes do not alter kernel/module behavior.
+No host update is applied merely by editing or running the Monitorize GUI source.
+
+The dedicated authorization command can also be used explicitly:
+
+```bash
+pkexec /usr/libexec/monitorize-vkms/monitorize-vkms-authorization enable
+pkexec /usr/libexec/monitorize-vkms/monitorize-vkms-authorization disable
+```
+
+Authorization records are root-owned under `/var/lib/monitorize-vkms/authorization`.
+They bind to the account name, UID, home and home-directory device/inode; changed
+identity fails closed and requires re-enrollment. Account removal should revoke
+access before reusing its UID/home. Revocation denies new silent creates but keeps
+a disabled record for generation-owned cleanup. Upgrades preserve enrollment;
+uninstall removes it. Enrollment is not a blanket sudo/pkexec exemption. Direct
+legacy CLI/pkexec creation remains an explicit interactive administrative path.
+
+`GetAuthorizationState` reports only the caller's authorization version/status.
+`CreateDisplayUnattended` never runs interactive Polkit; ordinary `CreateDisplay`
+retains interactive fallback for users who are not enrolled. Enrolled inactive
+local graphical sessions are permitted, but ambiguity, another user's ownership,
+remote-only sessions and existing compositor-removal guards still fail closed.
+This does not enable login-screen capture or bypass logout/compositor safety.
+
+Source validation covers grant integrity, revocation, bus identity, late-generation
+cleanup and inactive-session selection. Actual root installation, repeated display
+creation after the old authentication cache expires, login/lock/reconnect and
+revocation recovery still require host testing.

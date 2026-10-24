@@ -122,6 +122,8 @@ class TestLifecyclePreflight(unittest.TestCase):
             with self.assertRaisesRegex(CompositorError, "did not confirm deactivation"):
                 _worker_main()
 
+
+
     def test_lifecycle_lock_rejects_concurrent_operation(self):
         with TemporaryDirectory() as directory, \
              patch("monitorize_vkms.helper.LIFECYCLE_LOCK", Path(directory) / "lifecycle.lock"), \
@@ -210,6 +212,13 @@ class TestPersistentConnectorHelper(unittest.TestCase):
     def test_helper_worker_is_started_with_isolated_python(self):
         source = (Path(__file__).resolve().parent.parent / "monitorize_vkms" / "helper.py").read_text()
         self.assertIn('sys.executable, "-I", str(Path(__file__).resolve()), "--worker"', source)
+
+    def test_package_helper_can_start_under_isolated_python(self):
+        import subprocess
+        import sys
+        helper=Path(__file__).resolve().parent.parent/'monitorize_vkms/helper.py'
+        result=subprocess.run([sys.executable,'-I',str(helper),'--help'],capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr)
 
 
 if __name__ == "__main__":

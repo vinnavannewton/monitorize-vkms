@@ -21,3 +21,8 @@ __pycache__/
 /dist/
 /*.egg-info/
 /.cache/
+
+# Native package build outputs
+/packaging/arch/pkg/
+/packaging/arch/src/
+/packaging/arch/*.pkg.tar.*

@@ -69,6 +69,7 @@ fi
 
 for service_file in \
 	/usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service \
+	/usr/libexec/monitorize-vkms/monitorize-vkms-authorization \
 	/etc/systemd/system/monitorize-vkms.service \
 	/usr/share/dbus-1/system-services/io.github.vinnavannewton.MonitorizeVkms1.service \
 	/usr/share/dbus-1/interfaces/io.github.vinnavannewton.MonitorizeVkms1.xml \

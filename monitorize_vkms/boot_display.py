@@ -119,7 +119,7 @@ def desktop_operation_installed(uid: int, session: str, operation: str, *, engin
                 if helper._active_session(uid)[0] != session:
                     raise PermissionError('Desktop session changed during display operation.')
                 return dict(state='released', changed=False)
-        if value['phase'] == 'desktop' and value['session'] != session:
+        if value['phase'] == 'desktop' and value['session'] != session and operation != 'release':
             raise PermissionError('Reservation belongs to another desktop session.')
         def check():
             if helper._active_session(uid)[0] != session:

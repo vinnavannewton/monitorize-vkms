@@ -1,0 +1,21 @@
+# Build from a release source tree: makepkg --nodeps (dependencies must be installed).
+pkgname=monitorize-vkms
+pkgver=0.3.0
+pkgrel=1
+pkgdesc='Monitorize virtual displays with protected remote-login host support'
+arch=('x86_64' 'aarch64')
+url='https://github.com/vinnavannewton/monitorize-vkms'
+license=('GPL-2.0-only')
+depends=('python' 'python-dbus' 'python-gobject' 'polkit' 'systemd' 'util-linux' 'dkms')
+makedepends=('python')
+optdepends=('linux-headers: build for the Arch linux kernel; install headers matching your kernel')
+install=monitorize-vkms.install
+source=()
+sha256sums=()
+
+package() {
+    local repository
+    repository="$(cd "$startdir/../.." && pwd)"
+    python "$repository/scripts/stage-host-assets.py" --destdir "$pkgdir" --dkms
+    install -Dm644 "$startdir/monitorize-vkms-guard.hook" "$pkgdir/usr/share/libalpm/hooks/monitorize-vkms-guard.hook"
+}

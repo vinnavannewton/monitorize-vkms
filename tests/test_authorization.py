@@ -2,58 +2,138 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-from monitorize_vkms import authorization as auth
-from monitorize_vkms import dbus_service as service
+from monitorize_vkms import authorization as auth, dbus_service
 
 
-class AuthorizationTests(unittest.TestCase):
+class AuthorizationTest(unittest.TestCase):
+    def test_worker_connection_is_not_attached_to_glib_dispatch(self):
+        from unittest.mock import Mock
+        bus = Mock()
+        bus.get_unix_user.return_value = 1000
+        with patch.object(dbus_service.dbus, 'SystemBus', return_value=bus) as connect:
+            self.assertEqual(dbus_service._sender_uid(':1.9'), 1000)
+        connect.assert_called_once_with(private=True, mainloop=dbus_service.NULL_MAIN_LOOP)
+        bus.close.assert_called_once()
+
+    def test_worker_connection_closes_on_disconnected_caller(self):
+        from unittest.mock import Mock
+        bus = Mock()
+        bus.get_unix_user.side_effect = dbus_service.dbus.DBusException('disconnected')
+        with patch.object(dbus_service.dbus, 'SystemBus', return_value=bus), self.assertRaises(dbus_service.dbus.DBusException):
+            dbus_service._sender_uid(':1.9')
+        bus.close.assert_called_once()
+
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
-        self.directory=Path(self.temp.name)
-        self.account=SimpleNamespace(pw_gid=1000,pw_name='account',pw_dir='/home/account')
-        account=patch.object(auth.pwd,'getpwuid',return_value=self.account);account.start();self.addCleanup(account.stop)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name) / 'authorization'
+        for target, value in [('DIRECTORY', self.directory), ('OWNER_UID', os.getuid())]:
+            item = patch.object(auth, target, value)
+            item.start()
+            self.addCleanup(item.stop)
+        item = patch.object(auth, 'identity', return_value=dict(uid=1000, name='test', home_inode=42))
+        self.identity = item.start()
+        self.addCleanup(item.stop)
+        item = patch.object(auth.os, 'geteuid', return_value=0)
+        item.start()
+        self.addCleanup(item.stop)
 
-    def state(self):
-        # Unit tests use a user-owned /tmp fixture. Production checks all ancestors.
-        with patch.object(auth,'_directory',return_value=self.directory):
-            return auth.get_state(1000,directory=self.directory,owner_uid=os.getuid())
+    def test_enroll_revoke_and_reload(self):
+        self.assertFalse(auth.state(1000)['unattended_enabled'])
+        self.assertTrue(auth.set_enabled(1000, True)['unattended_enabled'])
+        self.assertEqual((self.directory / '1000.json').stat().st_mode & 0o777, 0o600)
+        self.assertFalse(auth.set_enabled(1000, False)['unattended_enabled'])
+        self.assertFalse(auth.read(1000)['enabled'])
 
-    def test_missing_valid_changed_account_and_revoked_grants(self):
-        self.assertFalse(self.state()['unattended_enabled'])
-        path=self.directory/'1000.json';path.write_text(json.dumps(auth._account(1000)));path.chmod(0o600)
-        self.assertTrue(self.state()['unattended_enabled'])
-        self.account.pw_name='replacement'
-        self.assertFalse(self.state()['unattended_enabled']);self.assertTrue(self.state()['repair_required'])
-        path.unlink();self.assertFalse(self.state()['unattended_enabled'])
+    def test_stale_identity_is_not_authorized(self):
+        auth.set_enabled(1000, True)
+        self.identity.return_value = dict(uid=1000, name='replacement', home_inode=43)
+        with self.assertRaises(PermissionError):
+            auth.read(1000)
 
-    def test_symlink_writable_and_malformed_grants_are_never_accepted(self):
+    def test_untrusted_permissions_and_symlinks_rejected(self):
+        auth.set_enabled(1000, True)
+        path = self.directory / '1000.json'
+        path.chmod(0o666)
+        with self.assertRaises(PermissionError):
+            auth.read(1000)
+        path.unlink()
+        path.symlink_to(Path(self.temp.name) / 'missing')
+        with self.assertRaises(OSError):
+            auth.read(1000)
+
+    def test_nonroot_cannot_enroll(self):
+        with patch.object(auth.os, 'geteuid', return_value=1000):
+            with self.assertRaises(PermissionError):
+                auth.set_enabled(1000, True)
+
+    def test_noninteractive_missing_grant_never_runs_pkcheck_or_helper(self):
+        with patch.object(dbus_service.authorization, 'read', return_value=None), patch.object(dbus_service.subprocess, 'run') as run:
+            with self.assertRaises(PermissionError):
+                dbus_service._request(':1.1', 1000, 'create', ['create'], interactive=False)
+            run.assert_not_called()
+
+    def test_grant_skips_pkcheck_but_revocation_blocks_new_create(self):
+        with patch.object(dbus_service.authorization, 'read', return_value={'enabled': True}), patch.object(dbus_service, '_execute_helper', return_value='ok') as execute:
+            self.assertEqual(dbus_service._request(':1.1', 1000, 'create', ['create'], False), 'ok')
+            execute.assert_called_once_with(1000, 'create', ['create'], unattended=True)
+        with patch.object(dbus_service.authorization, 'read', return_value={'enabled': False}), patch.object(dbus_service, '_execute_helper', return_value='clean') as execute:
+            with self.assertRaises(PermissionError):
+                dbus_service._request(':1.1', 1000, 'create', ['create'], False)
+            self.assertEqual(dbus_service._request(':1.1', 1000, 'destroy', ['destroy'], False), 'clean')
+            execute.assert_called_once_with(1000, 'destroy', ['destroy'], unattended=True)
+
+    def test_abandoned_result_cleans_only_its_explicit_generation(self):
+        with patch.object(dbus_service.authorization, 'read', return_value={'enabled': False}), patch.object(dbus_service, '_execute_helper') as execute:
+            dbus_service._cleanup_abandoned(1000, ['create', '--slot', 'mon2'], {'created': True, 'generation': 'old-generation'})
+            execute.assert_called_once_with(1000, 'destroy', ['destroy', '--slot', 'mon2', '--generation', 'old-generation'], unattended=True)
+
+    def test_stale_bus_identity_never_starts_helper(self):
+        with patch.object(dbus_service, '_sender_uid', return_value=1001), patch.object(dbus_service, '_request') as request:
+            with self.assertRaises(PermissionError):
+                dbus_service._run_live_request(':1.1', 1000, 'create', [], False)
+            request.assert_not_called()
+
+    def test_revoked_user_can_still_use_explicit_interactive_manual_create(self):
+        from subprocess import CompletedProcess
+        with patch.object(dbus_service.authorization, 'read', return_value={'enabled': False}), patch.object(dbus_service.subprocess, 'run', return_value=CompletedProcess([], 0)), patch.object(dbus_service, '_execute_helper', return_value='ok') as execute:
+            self.assertEqual(dbus_service._request(':1.1', 1000, 'create', ['create']), 'ok')
+            execute.assert_called_once_with(1000, 'create', ['create'], unattended=False)
+
+    def test_invalid_record_and_directory_never_authorize(self):
+        auth.set_enabled(1000, True)
+        path = self.directory / '1000.json'
+        path.write_text('{"version":1,"enabled":"true"}')
+        with self.assertRaises(PermissionError):
+            auth.read(1000)
+        self.directory.chmod(0o777)
+        with self.assertRaises(PermissionError):
+            auth.read(1000)
+
+    def test_uid_path_injection_and_root_enrollment_are_rejected(self):
+        for uid in ('../../other', True, 0, -1):
+            with self.subTest(uid=uid), self.assertRaises(ValueError):
+                auth.read(uid)
+
+    def test_legacy_mount_device_changes_do_not_invalidate_grant(self):
+        auth.set_enabled(1000,True)
         path=self.directory/'1000.json'
-        for content,mode in [('{}',0o600),(json.dumps(auth._account(1000)),0o666),('invalid',0o600)]:
-            path.write_text(content);path.chmod(mode)
-            self.assertFalse(self.state()['unattended_enabled']);self.assertTrue(self.state()['repair_required'])
-        path.unlink();path.symlink_to('/etc/passwd')
-        self.assertFalse(self.state()['unattended_enabled'])
-        with self.assertRaises(PermissionError):auth._directory(self.directory)
+        record=json.loads(path.read_text());record['identity']['home_device']=123
+        path.write_text(json.dumps(record))
+        self.assertTrue(auth.state(1000)['unattended_enabled'])
+        self.identity.return_value=dict(uid=1000,name='test',home_inode=99)
+        self.assertFalse(auth.state(1000)['unattended_enabled'])
+        self.assertTrue(auth.state(1000)['repair_required'])
+        with self.assertRaises(auth.StaleAuthorizationError):auth.read(1000)
 
-    def test_grant_failure_never_prompts_or_starts_helper(self):
-        with patch.object(auth,'require_grant',side_effect=PermissionError('revoked')),patch.object(service.subprocess,'run') as run:
-            with self.assertRaises(PermissionError):service._request(':1.2',1000,'create',['create','--slot','mon1'],unattended=True)
-            run.assert_not_called()
-
-    def test_silent_create_checks_grant_and_active_session_and_only_runs_fixed_helper(self):
-        with patch.object(auth,'require_grant') as grant,patch('monitorize_vkms.helper._active_session') as session,patch.object(service.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout='{"success":true}',stderr='')) as run:
-            result=service._request(':1.2',1000,'create',['create','--slot','mon1'],unattended=True)
-            self.assertTrue(json.loads(result)['success']);grant.assert_called_once_with(1000);session.assert_called_once_with(1000)
-            run.assert_called_once();self.assertEqual(run.call_args.args[0][2],str(service.HELPER))
-            self.assertEqual(run.call_args.kwargs['env']['PKEXEC_UID'],'1000')
-            run.reset_mock()
-            with self.assertRaises(PermissionError):service._request(':1.2',1000,'destroy',['destroy'],unattended=True)
-            run.assert_not_called()
-
-    def test_interactive_create_still_requires_polkit(self):
-        with patch.object(service.subprocess,'run',return_value=SimpleNamespace(returncode=1)) as run:
-            with self.assertRaises(PermissionError):service._request(':1.2',1000,'create',['create'])
-            self.assertEqual(run.call_args.args[0][0],'/usr/bin/pkcheck')
+    def test_stale_record_allows_only_explicit_polkit_fallback(self):
+        from subprocess import CompletedProcess
+        with patch.object(dbus_service.authorization,'read',side_effect=auth.StaleAuthorizationError('stale')), \
+             patch.object(dbus_service.subprocess,'run',return_value=CompletedProcess([],0)) as polkit, \
+             patch.object(dbus_service,'_execute_helper',return_value='ok'):
+            self.assertEqual(dbus_service._request(':1.1',1000,'create',['create'],True),'ok')
+            polkit.assert_called_once()
+            with self.assertRaises(auth.StaleAuthorizationError):
+                dbus_service._request(':1.1',1000,'create',['create'],False)

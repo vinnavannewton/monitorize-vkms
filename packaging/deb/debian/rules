@@ -1,0 +1,10 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+override_dh_auto_build:
+override_dh_auto_test:
+	python3 -m unittest discover -s tests
+override_dh_auto_install:
+	python3 scripts/stage-host-assets.py --destdir debian/monitorize-vkms --dkms
+override_dh_installsystemd:
+	dh_installsystemd --no-start --no-enable

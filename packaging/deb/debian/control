@@ -1,0 +1,13 @@
+Source: monitorize-vkms
+Section: kernel
+Priority: optional
+Maintainer: Monitorize contributors <noreply@example.com>
+Build-Depends: debhelper-compat (= 13), python3 (>= 3.11), python3-dbus, python3-gi
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: monitorize-vkms
+Architecture: all
+Depends: ${misc:Depends}, python3 (>= 3.11), python3-dbus, python3-gi, dkms, pkexec, systemd, util-linux
+Description: Monitorize VKMS host and protected remote-login display support
+ Includes DKMS sources and userspace host lifecycle services.

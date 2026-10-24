@@ -2,6 +2,12 @@
  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
 <node name="/io/github/vinnavannewton/MonitorizeVkms1">
   <interface name="io.github.vinnavannewton.MonitorizeVkms1">
+    <method name="GetAuthorizationState"><arg name="response_json" type="s" direction="out"/></method>
+    <method name="CreateDisplayUnattended">
+      <arg name="display" type="s" direction="in"/><arg name="width" type="i" direction="in"/>
+      <arg name="height" type="i" direction="in"/><arg name="refresh" type="d" direction="in"/>
+      <arg name="response_json" type="s" direction="out"/>
+    </method>
     <method name="GetCapabilities"><arg name="response_json" type="s" direction="out"/></method>
     <method name="GetAuthorizationState"><arg name="response_json" type="s" direction="out"/></method>
     <method name="GetStatus"><arg name="response_json" type="s" direction="out"/></method>

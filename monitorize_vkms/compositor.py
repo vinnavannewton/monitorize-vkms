@@ -241,14 +241,20 @@ def _wait_for_new_vkms_connector(
     display_config=None,
     attempts=VKMS_DISCOVERY_ATTEMPTS,
     delay=WAIT_DELAY,
+    expected_output_name=None,
 ) -> tuple[str, Any, str]:
     display_config = display_config or _display_config_interface()
     latest_error = ""
     for _attempt in range(attempts):
         state = _mutter_state(display_config)
-        connector, error = _new_vkms_connector_from_state(
-            state, before_identities, width, height
-        )
+        if expected_output_name:
+            matches = [monitor for monitor in state[1] if _connector_name(monitor) == expected_output_name]
+            connector = expected_output_name if len(matches) == 1 else ""
+            error = f"expected one named VKMS connector {expected_output_name}; found {len(matches)}"
+        else:
+            connector, error = _new_vkms_connector_from_state(
+                state, before_identities, width, height
+            )
         if connector:
             return connector, state, ""
         latest_error = error

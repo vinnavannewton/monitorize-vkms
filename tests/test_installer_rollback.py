@@ -57,6 +57,7 @@ if backup_one_target "$1/tool"; then exit 1; fi
 WORK_DIR="$1/backup"
 REPOSITORY_DIR="$1/source with spaces"
 PYTHON_LIB_DIR="$1/lib"
+CAPABILITIES_PATH="$1/capabilities.json"
 mkdir -p "$WORK_DIR" "$PYTHON_LIB_DIR" "$REPOSITORY_DIR"
 BACKUP_TARGETS=(); BACKUP_EXISTS=(); BOOTSTRAP_WAS_ENABLED=0
 printf '/previous/checkout\\n' > "$PYTHON_LIB_DIR/source-checkout"
@@ -67,6 +68,7 @@ for variable in HELPER_SOURCE HELPER_PATH AUTHORIZATION_PATH DBUS_SOURCE DBUS_PA
   printf -v "$variable" '%s' "$1/unused"
 done
 install() { :; }
+python3() { :; }
 systemctl() { :; }
 chown() { :; }
 chmod() { :; }

@@ -14,9 +14,9 @@ readonly CONFIG_BACKUP="${STATE_DIR}/preexisting-modprobe.conf"
 readonly LOCK_PATH="/run/lock/monitorize-vkms.lock"
 readonly BOOTSTRAP_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-bootstrap"
 readonly BOOTSTRAP_UNIT_PATH="/etc/systemd/system/monitorize-vkms-bootstrap.service"
+readonly AUTHORIZATION_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-authorization"
 readonly HELPER_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-helper"
 readonly DBUS_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service"
-readonly AUTHORIZATION_PATH="/usr/libexec/monitorize-vkms/monitorize-vkms-authorization"
 readonly DBUS_UNIT_PATH="/etc/systemd/system/monitorize-vkms.service"
 readonly DBUS_ACTIVATION_PATH="/usr/share/dbus-1/system-services/io.github.vinnavannewton.MonitorizeVkms1.service"
 readonly DBUS_POLICY_PATH="/etc/dbus-1/system.d/io.github.vinnavannewton.MonitorizeVkms1.conf"
@@ -150,10 +150,11 @@ remove_bootstrap_service() {
 }
 
 remove_cli_and_tools() {
+	rm -rf -- "${STATE_DIR}/authorization"
 	if command -v systemctl >/dev/null; then
 		systemctl stop monitorize-vkms.service >/dev/null 2>&1 || true
 	fi
-	rm -f -- "$CLI_PATH" "$POLKIT_POLICY_PATH" "$HELPER_PATH" "$DBUS_PATH" "$AUTHORIZATION_PATH" \
+	rm -f -- "$CLI_PATH" "$POLKIT_POLICY_PATH" "$HELPER_PATH" "$AUTHORIZATION_PATH" "$DBUS_PATH" \
 		"$DBUS_UNIT_PATH" "$DBUS_ACTIVATION_PATH" "$DBUS_POLICY_PATH" "$DBUS_INTERFACE_PATH"
 	if command -v systemctl >/dev/null; then
 		systemctl daemon-reload || warn 'systemd daemon-reload failed'
@@ -191,6 +192,7 @@ verify_removal() {
 
 main() {
 	require_root
+	/usr/bin/python3 -I "$(dirname -- "${BASH_SOURCE[0]}")/monitorize_vkms/package_maintenance.py" pre-remove
 	command -v find >/dev/null || die "find is required"
 	command -v depmod >/dev/null || die "depmod is required"
 	command -v modinfo >/dev/null || die "modinfo is required"
@@ -198,6 +200,7 @@ main() {
 	acquire_global_lock
 	remove_bootstrap_service
 	remove_cli_and_tools
+	rm -f -- /usr/share/monitorize-vkms/capabilities.json
 
 	if command -v dkms >/dev/null; then
 		remove_dkms_packages
