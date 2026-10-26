@@ -25,6 +25,16 @@ See src/vkms/ORIGIN.md for provenance.
 | Hyprland             | ✅             |
 | Niri                 | ✅             |
 
+The XRandR backend also handles native Xorg sessions on XFCE, MATE, LXQt,
+Openbox and other X11 desktops when Xorg exposes the VKMS output. Install
+`xrandr` for this path. These additional desktops share the Cinnamon X11
+connector-ID mapping and ownership checks; per-desktop/GPU live validation is
+still required. Xwayland is not a physical-output control backend.
+
+The Monitorize app's managed Hyprland/X11 listeners require the updated host
+capability declaration. Updating this source checkout alone does not update the
+installed privileged helper or restart its service.
+
 ---
 
 ## Standalone CLI Usage

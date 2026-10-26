@@ -435,7 +435,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "Use GNOME, KDE Plasma, Cinnamon/X11, Niri, or a headless DRM session.",
     )
 
-    create_backends = {"gnome", "kde", "cinnamon", "niri", "hyprland"}
+    create_backends = {"gnome", "kde", "cinnamon", "niri", "hyprland", "x11"}
     create_supported = (desktop in create_backends or headless_drm) and (
         desktop != "cinnamon" or os.environ.get("XDG_SESSION_TYPE") == "x11"
     )

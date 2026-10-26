@@ -70,7 +70,8 @@ def detect_compositor() -> str | None:
         return "hyprland"
     if os.environ.get("SWAYSOCK"):
         return "sway"
-
+    if _is_x11_session():
+        return "x11"
     return None
 
 
@@ -1456,6 +1457,8 @@ def kde_deactivate_vkms(target_name: str) -> bool:
 def get_compositor_snapshot() -> tuple[str | None, Any]:
     """Take a snapshot of existing displays before creating a virtual monitor."""
     desktop = detect_compositor()
+    if _is_x11_session():
+        return desktop or 'x11', xrandr_outputs()
     if desktop == "niri":
         from .niri_output import outputs
         return "niri", set(outputs())
@@ -1491,6 +1494,9 @@ def activate_in_compositor(
     expected_connector_id: int | None = None,
 ) -> tuple[bool, dict[str, Any], str]:
     """Activate newly added virtual display in the active desktop compositor."""
+    if _is_x11_session():
+        return xrandr_activate_vkms(before_state or [], width, height, refresh,
+                                   expected_output_name, expected_connector_id)
     if desktop == "niri":
         from .niri_output import activate
         return activate(expected_output_name, width, height, refresh)
@@ -1590,6 +1596,8 @@ def deactivate_in_compositor(
     """Clean up / remove virtual display from compositor layout."""
     if target_name is None:
         raise CompositorError("Cannot remove a Monitorize display without its exact DRM connector identity")
+    if _is_x11_session():
+        return xrandr_deactivate_vkms({target_name: target_connector_id})
     if desktop == "niri":
         from .niri_output import deactivate
         return deactivate(target_name)

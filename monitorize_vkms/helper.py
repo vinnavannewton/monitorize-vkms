@@ -352,6 +352,8 @@ def _lease_matches_request(lease: dict | None, *, uid: int, session: str, boot_i
 
 
 def _validate_compositor_support(desktop: str | None, env: dict[str, str]) -> None:
+    if desktop == 'x11' and env.get('XDG_SESSION_TYPE') != 'x11':
+        raise VkmsHelperError('XRandR display creation requires a native X11 session.')
     if desktop == "cinnamon" and env.get("XDG_SESSION_TYPE") != "x11":
         raise VkmsHelperError("Cinnamon display creation is supported only in an X11 session.")
     if desktop == "cosmic":
@@ -362,7 +364,7 @@ def _validate_compositor_support(desktop: str | None, env: dict[str, str]) -> No
     if desktop == "niri" and not env.get("NIRI_SOCKET"):
         raise VkmsHelperError("Niri IPC socket is unavailable in the active session.")
     # Hyprland lifecycle is experimental pending live validation on Aquamarine 0.15.1+.
-    if desktop not in {"gnome", "kde", "cinnamon", "niri", "hyprland", None}:
+    if desktop not in {"gnome", "kde", "cinnamon", "niri", "hyprland", "x11", None}:
         raise VkmsHelperError(
             f"Display creation is unsupported for detected compositor {desktop!r}; "
             "refusing to connect a display that cannot be safely managed."
@@ -898,6 +900,7 @@ def main() -> int:
         response["api_version"] = 1
         response["displays"] = list(INSTANCE_NAMES)
         response["topology_ready"] = True
+        response['managed_layout_backends'] = ['x11', 'hyprland', 'niri']
         from monitorize_vkms.protocols import capabilities
         response["remote_login_protocols"] = capabilities()
     elif args.operation == "status":
