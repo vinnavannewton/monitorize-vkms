@@ -27,7 +27,7 @@ python3 -m unittest discover -s tests
 
 %pretrans -p /bin/sh
 if [ -f /usr/lib/monitorize-vkms/monitorize_vkms/package_maintenance.py ]; then
-    /usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/package_maintenance.py pre-remove || exit 1
+    /usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/package_maintenance.py pre-upgrade --target-version %{version} || exit 1
 fi
 
 %preun

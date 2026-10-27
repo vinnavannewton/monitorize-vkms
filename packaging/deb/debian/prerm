@@ -2,6 +2,6 @@
 set -e
 case "$1" in
     remove|deconfigure) /usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/package_maintenance.py pre-remove ;;
-    upgrade) /usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/package_maintenance.py pre-remove ;;
+    upgrade) /usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/package_maintenance.py pre-upgrade --target-version "$2" ;;
 esac
 #DEBHELPER#

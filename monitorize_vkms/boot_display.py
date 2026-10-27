@@ -19,6 +19,7 @@ from monitorize_vkms.lease import read_lease
 from monitorize_vkms.boot_policy import validate_protected
 GREETER_ON_DEMAND_PROTOCOL = 1
 IDLE_DISPLAY_PROTOCOL = 1
+LIVE_ENROLLMENT_PROTOCOL = 1
 
 
 def boot_output_status(state: Path) -> dict | None:
@@ -73,6 +74,45 @@ def reconnect_reserved(*, state: Path, generation: str, boot_id: str, connector:
     if connector != expected:
         raise PermissionError('Invalid reserved configfs connector.')
     return runtime.reconnect_reserved(state=state, generation=generation, boot_id=boot_id, connector=connector)
+
+
+def reserve_desktop_installed(uid: int, session: str, *, generation: str) -> dict:
+    helper, runtime, settings = _installed_context()
+    if type(uid) is not int or uid != settings['uid']:
+        raise PermissionError('Only the enrolled account may reserve the display.')
+    def check():
+        if runtime.desktop_context(uid) != session:
+            raise PermissionError('Enrolled desktop session changed.')
+    check()
+    lock = helper._acquire_lifecycle_lock()
+    try:
+        root = helper._configfs_root([])
+        _, connector = helper._require_bootstrap(root, [], 'mon1')
+        with runtime.quiescent(uid):
+            return runtime.reserve_desktop_output(state=helper.STATE_DIRECTORY, connector=connector,
+                uid=uid, session=session, boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                generation=generation, context_check=check)
+    finally:
+        os.close(lock)
+
+
+def release_live_desktop_installed(uid: int, session: str, *, generation: str) -> dict:
+    with _transaction(enabled=False, allow_missing=True) as (helper, runtime, settings, value, connector):
+        if type(uid) is not int or uid != settings['uid'] or runtime.desktop_context(uid) != session:
+            raise PermissionError('Enrolled desktop session changed.')
+        if value is None:
+            return dict(state='released', changed=False)
+        if value['phase'] != 'desktop' or value['session'] != session or value['generation'] != generation:
+            raise PermissionError('Reservation generation changed; retained for its owner.')
+        with runtime.quiescent(uid):
+            if runtime.desktop_context(uid) != session:
+                raise PermissionError('Enrolled desktop session changed.')
+            runtime.connector_ready(connector)
+            if (connector/'status').read_text().strip() != '2':
+                runtime.idle_reserved(state=helper.STATE_DIRECTORY, connector=connector, lease=value)
+            from .lease import remove_lease
+            remove_lease(helper.STATE_DIRECTORY, 'mon1')
+        return dict(state='released', changed=True)
 
 
 def greeter_operation_installed(operation: str, *, context_check, activate) -> dict:
@@ -202,12 +242,24 @@ def main() -> int:
     try:
         root = helper._configfs_root([])
         _, connector = helper._require_bootstrap(root, [], 'mon1')
+        value = boot_output_status(helper.STATE_DIRECTORY)
+        if value is not None and value['phase'] == 'desktop':
+            session = runtime.desktop_context(settings['uid'])
+            runtime.verify_desktop_reservation(connector=connector, lease=value, uid=settings['uid'],
+                session=session, boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                context_check=lambda: _check_desktop(runtime, settings['uid'], session))
+            return 0
         runtime.reserve_boot_output(state=helper.STATE_DIRECTORY, connector=connector,
                                     uid=settings['uid'], boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
                                     sessions=runtime.local_sessions())
     finally:
         os.close(lock)
     return 0
+
+
+def _check_desktop(runtime, uid, session):
+    if runtime.desktop_context(uid) != session:
+        raise PermissionError('Enrolled desktop session changed.')
 
 
 if __name__ == '__main__':

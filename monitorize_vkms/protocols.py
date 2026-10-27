@@ -2,11 +2,12 @@
 BOOT_DISPLAY_PROTOCOL = 1
 GREETER_ON_DEMAND_PROTOCOL = 1
 IDLE_DISPLAY_PROTOCOL = 1
+LIVE_ENROLLMENT_PROTOCOL = 1
 
 
 def capabilities() -> dict:
     return dict(boot_display=BOOT_DISPLAY_PROTOCOL, greeter_on_demand=GREETER_ON_DEMAND_PROTOCOL,
-                idle_display=IDLE_DISPLAY_PROTOCOL)
+                idle_display=IDLE_DISPLAY_PROTOCOL, live_enrollment=LIVE_ENROLLMENT_PROTOCOL)
 
 
 def manifest(version: str) -> dict:

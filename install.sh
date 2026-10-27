@@ -539,8 +539,8 @@ rollback_failed_install() {
 
 main() {
 	require_root
-	/usr/bin/python3 -I "${REPOSITORY_DIR}/monitorize_vkms/package_maintenance.py" pre-remove
 	validate_metadata
+	/usr/bin/python3 -I "${REPOSITORY_DIR}/monitorize_vkms/package_maintenance.py" pre-upgrade --target-version "$MODULE_PACKAGE_VERSION"
 	detect_distro
 	check_prerequisites
 	acquire_global_lock

@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import pwd
+import re
 import secrets
 import stat
 import subprocess
@@ -126,6 +127,84 @@ def reserve_boot_output(*, state: Path, connector: Path, uid: int,
                      mode=list(MODE), edid_sha256=digest, state='pending')
     write_lease(state, 'mon1', value)
     program_edid(connector, edid)
+    value['state'] = 'reserved'
+    write_lease(state, 'mon1', value)
+    return value
+
+
+def desktop_context(uid: int) -> str:
+    """Resolve the sole local seat0 desktop without trusting a client session ID."""
+    from . import helper
+    if type(uid) is not int or uid <= 0:
+        raise PermissionError('Invalid enrolled account.')
+    session, environment = helper._active_session(uid)
+    users = [row for row in local_sessions() if row.get('seat') == 'seat0'
+             and row.get('class') not in ('manager', 'greeter')]
+    if (environment.get('XDG_SESSION_TYPE') != 'wayland' or len(users) != 1
+            or users[0].get('class') not in ('user', 'user-early', 'user-incomplete')
+            or users[0].get('uid') != uid or users[0].get('session') != session):
+        raise PermissionError('A unique enrolled local Wayland desktop is required.')
+    return session
+
+
+def verify_desktop_reservation(*, connector: Path, lease: dict, uid: int,
+                               session: str, boot_id: str, context_check) -> dict:
+    """Read-only validation; callers hold the lifecycle lock."""
+    context_check()
+    validate_protected(lease)
+    if (lease['uid'] != uid or lease['session'] != session or lease['boot_id'] != boot_id
+            or lease['phase'] != 'desktop' or lease['state'] not in ('reserved', 'active')):
+        raise PermissionError('Live reservation belongs to another lifecycle or needs recovery.')
+    connector_ready(connector)
+    if hashlib.sha256((connector/'edid').read_bytes()).hexdigest() != lease['edid_sha256']:
+        raise PermissionError('Live reservation EDID changed.')
+    status = (connector/'status').read_text().strip()
+    if lease['state'] == 'active':
+        if status != '1':
+            raise PermissionError('Active live reservation is disconnected.')
+        output = _output(lease)
+        if (Path(output['path'])/'enabled').read_text().strip() != 'enabled':
+            raise PermissionError('Live reservation is not enabled.')
+    elif status != '2':
+        raise PermissionError('Disconnected reservation unexpectedly became connected.')
+    context_check()
+    return lease
+
+
+def reserve_desktop_output(*, state: Path, connector: Path, uid: int, session: str,
+                           boot_id: str, generation: str, context_check) -> dict:
+    """Prepare an owned, disconnected monitor in an authenticated desktop."""
+    if (type(uid) is not int or uid <= 0 or not isinstance(session, str)
+            or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', session) or not boot_id
+            or not isinstance(generation, str) or not re.fullmatch(r'[0-9a-f]{32}', generation)):
+        raise ValueError('Invalid live reservation context.')
+    context_check()
+    connector_ready(connector)
+    previous = read_lease(state, 'mon1')
+    if previous is not None:
+        validate_protected(previous)
+        if (previous['uid'] != uid or previous['session'] != session
+                or previous['boot_id'] != boot_id or previous['phase'] != 'desktop'
+                or previous['generation'] != generation):
+            raise PermissionError('Display slot belongs to another lifecycle.')
+        if previous['state'] != 'pending':
+            return verify_desktop_reservation(connector=connector, lease=previous, uid=uid,
+                session=session, boot_id=boot_id, context_check=context_check)
+    if (connector/'status').read_text().strip() != '2':
+        raise RuntimeError('Live reservation requires a disconnected unused display slot.')
+    edid = generate_edid(*MODE, 'mon1')
+    digest = hashlib.sha256(edid).hexdigest()
+    if previous is not None and (previous['edid_sha256'] != digest or previous['mode'] != MODE):
+        raise PermissionError('Pending live reservation has a different display mode.')
+    value = dict(schema_version=2, protected=True, owner_kind='remote-login', uid=uid,
+                 phase='desktop', session=session, boot_id=boot_id, generation=generation,
+                 mode=list(MODE), edid_sha256=digest, state='pending')
+    context_check()
+    write_lease(state, 'mon1', value)
+    program_edid(connector, edid)
+    if (connector/'edid').read_bytes() != edid:
+        raise RuntimeError('Live reservation EDID readback failed.')
+    context_check()
     value['state'] = 'reserved'
     write_lease(state, 'mon1', value)
     return value
