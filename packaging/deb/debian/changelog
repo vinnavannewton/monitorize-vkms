@@ -1,3 +1,9 @@
+monitorize-vkms (1.0-1) unstable; urgency=medium
+
+  * Bump Monitorize VKMS to version 1.0.
+
+ -- vinnavannewton <vinnavannewton@proton.me>  Tue, 27 Oct 2026 21:08:22 +0530
+
 monitorize-vkms (0.3.0-1) unstable; urgency=medium
 
   * Add protected remote-login userspace lifecycle and native host delivery.

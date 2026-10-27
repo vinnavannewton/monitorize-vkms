@@ -24,7 +24,7 @@ class HostDeliveryTests(unittest.TestCase):
             self.assertEqual(helper.read_bytes(),package.read_bytes())
             self.assertTrue((stage/'usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py').is_file())
             manifest=json.loads((stage/'usr/share/monitorize-vkms/capabilities.json').read_text())
-            self.assertEqual(manifest['version'],'0.3.0')
+            self.assertEqual(manifest['version'],(ROOT/'VERSION').read_text().strip())
             self.assertEqual(manifest['remote_login_protocols']['idle_display'],1)
             self.assertEqual(helper.stat().st_mode & 0o777,0o755)
             self.assertFalse((stage/'etc/monitorize').exists())

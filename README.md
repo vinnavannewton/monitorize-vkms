@@ -201,6 +201,19 @@ To rerun installation from the existing source without fetching updates:
 monitorize-vkms reinstall
 ```
 
+### Bumping the source version
+
+From this checkout, run:
+
+```sh
+./scripts/bump-version.py 1.0.1
+```
+
+Accepts `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. Synchronizes `VERSION`, DKMS,
+RPM, Arch, and Debian metadata, resets package revisions, and preserves Debian
+changelog history. Existing version mismatches stop the command before writing.
+This edits source files only; it does not install, build, commit, push, or tag.
+
 ---
 
 ## Verification & Troubleshooting
