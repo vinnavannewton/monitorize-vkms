@@ -13,6 +13,8 @@ from monitorize_vkms.lease import read_lease
 
 
 def assert_removal_safe() -> None:
+    from monitorize_vkms.recovery import check_admission
+    check_admission()
     settings = read_enrollment()
     value = read_lease(Path('/run/monitorize-vkms'), 'mon1')
     if (settings and settings['enabled']) or (value and value.get('protected') is True):
@@ -43,6 +45,8 @@ def installed_release():
 
 
 def assert_upgrade_safe(target_version):
+    from monitorize_vkms.recovery import check_admission
+    check_admission()
     target = release_version(target_version or '')
     # Compatible forward upgrades do not unload a module, unplug a display or
     # re-enroll remote login. Destructive/unknown targets still require release.

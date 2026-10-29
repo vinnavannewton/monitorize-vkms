@@ -16,6 +16,7 @@ def stage_host_assets(destination: Path) -> None:
     if destination == Path('/'):
         raise ValueError('Stage to a package root, never the live system.')
     files = {
+        'monitorize_vkms/recovery.py': ('usr/libexec/monitorize-vkms/monitorize-vkms-recovery', 0o755),
         'monitorize_vkms/authorization_setup.py': ('usr/libexec/monitorize-vkms/monitorize-vkms-authorization', 0o755),
         'VERSION': ('usr/lib/monitorize-vkms/VERSION', 0o644),
         'monitorize_vkms/helper.py': ('usr/libexec/monitorize-vkms/monitorize-vkms-helper', 0o755),

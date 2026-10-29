@@ -416,6 +416,7 @@ install_cli_and_tools() {
 	install -D -o root -g root -m 0644 "${WORK_DIR}/host-userspace/usr/share/monitorize-vkms/capabilities.json" "$CAPABILITIES_PATH"
 	install -D -o root -g root -m 0755 "$HELPER_SOURCE" "$HELPER_PATH"
 	install -D -o root -g root -m 0755 "$DBUS_SOURCE" "$DBUS_PATH"
+	install -D -o root -g root -m 0755 "${REPOSITORY_DIR}/monitorize_vkms/recovery.py" /usr/libexec/monitorize-vkms/monitorize-vkms-recovery
 	install -D -o root -g root -m 0755 "${REPOSITORY_DIR}/monitorize_vkms/authorization_setup.py" "$AUTHORIZATION_PATH"
 	install -D -o root -g root -m 0644 "$DBUS_UNIT_SOURCE" "$DBUS_UNIT_PATH"
 	install -D -o root -g root -m 0644 "$DBUS_ACTIVATION_SOURCE" "$DBUS_ACTIVATION_PATH"

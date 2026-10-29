@@ -11,7 +11,7 @@ class ProtocolTests(unittest.TestCase):
         from monitorize_vkms import boot_display
         manifest=protocols.manifest('0.3.0')
         self.assertEqual(manifest,dict(schema_version=1,version='0.3.0',remote_login_protocols=dict(
-            boot_display=1,greeter_on_demand=1,idle_display=1,live_enrollment=1)))
+            boot_display=1,greeter_on_demand=1,idle_display=1,live_enrollment=1,host_recovery=1)))
         for function in ('boot_output_status','return_to_greeter','reconnect_reserved',
                          'desktop_operation_installed','greeter_operation_installed',
                          'reserve_desktop_installed','release_live_desktop_installed'):

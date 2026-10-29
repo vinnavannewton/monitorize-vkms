@@ -8,6 +8,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackageUpgradeGuardTests(unittest.TestCase):
+    def setUp(self):
+        from unittest.mock import patch
+        admission=patch('monitorize_vkms.recovery.read_gate',return_value=None)
+        admission.start();self.addCleanup(admission.stop)
+
     def test_release_versions_match_version_file_syntax(self):
         for value, expected in [('1.0', (1, 0, 0)), ('1.0-1', (1, 0, 0)),
                                 ('0.3', (0, 3, 0)), ('0.3.0-2', (0, 3, 0)),

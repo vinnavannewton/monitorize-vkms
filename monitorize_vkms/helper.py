@@ -69,6 +69,7 @@ def _require_polkit_root() -> None:
 
 
 def _acquire_lifecycle_lock():
+    from monitorize_vkms.recovery import check_admission
     if os.geteuid() != 0:
         raise VkmsHelperError("Display lifecycle operations require the privileged helper.")
     fd = None
@@ -79,6 +80,9 @@ def _acquire_lifecycle_lock():
             raise VkmsHelperError("The Monitorize VKMS lifecycle lock is not a root-owned regular file.")
         os.fchmod(fd, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:check_admission()
+        except (OSError,ValueError,RuntimeError) as error:
+            raise VkmsHelperError(str(error)) from error
         return fd
     except (OSError, VkmsHelperError) as exc:
         if fd is not None:

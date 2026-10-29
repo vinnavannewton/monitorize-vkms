@@ -9,6 +9,11 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 class HostDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        from unittest.mock import patch
+        admission=patch('monitorize_vkms.recovery.read_gate',return_value=None)
+        admission.start();self.addCleanup(admission.stop)
+
     def test_stage_produces_matching_helpers_and_no_enrollment_or_service_enablement(self):
         script=ROOT/'scripts/stage-host-assets.py'
         spec=importlib.util.spec_from_file_location('stage_host',script)

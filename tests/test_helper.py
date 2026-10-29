@@ -124,8 +124,23 @@ class TestLifecyclePreflight(unittest.TestCase):
 
 
 
+    def test_recovery_admission_is_rechecked_with_lifecycle_lock_held(self):
+        from monitorize_vkms import helper
+        order=[]
+        with TemporaryDirectory() as directory, \
+             patch.object(helper,'LIFECYCLE_LOCK',Path(directory)/'lifecycle.lock'), \
+             patch.object(helper.os,'geteuid',return_value=0), \
+             patch.object(helper.os,'fstat',return_value=SimpleNamespace(st_mode=stat.S_IFREG|0o600,st_uid=0,st_nlink=1)), \
+             patch.object(helper.fcntl,'flock',side_effect=lambda *args:order.append('locked')), \
+             patch('monitorize_vkms.recovery.check_admission',side_effect=lambda:order.append('admission')):
+            descriptor=helper._acquire_lifecycle_lock()
+            import os
+            os.close(descriptor)
+        self.assertEqual(order,['locked','admission'])
+
     def test_lifecycle_lock_rejects_concurrent_operation(self):
         with TemporaryDirectory() as directory, \
+             patch("monitorize_vkms.recovery.GATE", Path(directory)/"recovery.json"), \
              patch("monitorize_vkms.helper.LIFECYCLE_LOCK", Path(directory) / "lifecycle.lock"), \
              patch("monitorize_vkms.helper.os.geteuid", return_value=0), \
              patch("monitorize_vkms.helper.os.fstat", return_value=SimpleNamespace(
