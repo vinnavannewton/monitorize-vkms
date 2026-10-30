@@ -24,6 +24,7 @@ See src/vkms/ORIGIN.md for provenance.
 | Cinnamon X11         | ✅             |
 | Hyprland             | ✅             |
 | Niri                 | ✅             |
+| COSMIC               | ❌             |
 
 The XRandR backend also handles native Xorg sessions on XFCE, MATE, LXQt,
 Openbox and other X11 desktops when Xorg exposes the VKMS output. Install
