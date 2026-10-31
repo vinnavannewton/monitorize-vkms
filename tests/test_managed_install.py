@@ -51,7 +51,10 @@ class LifecycleCompatibilityTests(unittest.TestCase):
         backend = Mock()
         backend.state.return_value = ({'uid': uid, 'enabled': enabled}, protected)
         backend.active.return_value = active
-        return SimpleNamespace(backend=backend, prepare=prepare), events
+        backend.connection_in_use.return_value = False
+        backend.masked.return_value = False
+        backend.boot_id = 'boot-fixture'
+        return SimpleNamespace(backend=backend, prepare=prepare, load=Mock(return_value=None), save=Mock()), events
 
     def test_modern_helper_includes_disabled_idle_services(self):
         lifecycle, events = self.lifecycle(modern=True, enabled=False, active=True)
@@ -76,9 +79,37 @@ class LifecycleCompatibilityTests(unittest.TestCase):
         self.assertEqual(events, [('upgrade', False)])
         lifecycle.backend.active.assert_not_called()
 
-    def test_legacy_disabled_live_services_require_repair_before_mutation(self):
+    def test_legacy_disabled_idle_services_get_durable_receipt_before_prepare(self):
         lifecycle, events = self.lifecycle(enabled=False, active=True)
-        with self.assertRaisesRegex(RuntimeError, 'Repair remote login'):
+        units = ['monitorize-remote-login.service', 'monitorize-vkms-boot-display.service',
+                 'monitorize-remote-login-boot@1000.service', 'monitorize-remote-login-desktop@1000.service']
+        lifecycle.backend.masked.side_effect = lambda name: name == units[1]
+        lifecycle.save.side_effect = lambda value: events.append(('saved', value))
+        m.prepare_lifecycle(lifecycle, 1000)
+        self.assertEqual(events[0], ('saved', dict(uid=1000, operation='upgrade', boot_id='boot-fixture',
+            restart=True, masks=[units[0], units[2], units[3]], stage='pausing')))
+        self.assertEqual(events[1], ('upgrade', False))
+        self.assertFalse(lifecycle.backend.state.return_value[0]['enabled'])
+
+    def test_legacy_disabled_connected_services_refuse_before_receipt_or_pause(self):
+        lifecycle, events = self.lifecycle(enabled=False, active=True)
+        lifecycle.backend.connection_in_use.return_value = True
+        with self.assertRaisesRegex(RuntimeError, 'Disconnect'):
+            m.prepare_lifecycle(lifecycle, 1000)
+        lifecycle.save.assert_not_called()
+        self.assertEqual(events, [])
+
+    def test_existing_receipt_is_preserved_for_legacy_recovery_checks(self):
+        lifecycle, events = self.lifecycle(enabled=False, active=True)
+        lifecycle.load.return_value = dict(uid=2000, operation='remove', boot_id='old')
+        m.prepare_lifecycle(lifecycle, 1000)
+        lifecycle.save.assert_not_called()
+        self.assertEqual(events, [('upgrade', False)])
+
+    def test_receipt_write_failure_never_calls_prepare(self):
+        lifecycle, events = self.lifecycle(enabled=False, active=True)
+        lifecycle.save.side_effect = OSError('disk full')
+        with self.assertRaisesRegex(OSError, 'disk full'):
             m.prepare_lifecycle(lifecycle, 1000)
         self.assertEqual(events, [])
 

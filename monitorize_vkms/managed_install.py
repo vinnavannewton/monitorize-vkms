@@ -68,16 +68,21 @@ def prepare_lifecycle(lifecycle, uid):
     if 'include_idle_services' in inspect.signature(lifecycle.prepare).parameters:
         lifecycle.prepare('upgrade', include_idle_services=True)
         return
-    # Older helpers already pause enabled/protected enrollments. They skip
-    # disabled enrollments entirely, so do not proceed with leftover services
-    # in that case. Never retry TypeError: it could follow a partial mutation.
+    # Old helpers can resume a durable pause receipt even for disabled settings,
+    # but cannot initiate one for leftover idle services. Seed the same receipt
+    # as modern prepare(), then retain the installed helper's pause/release and
+    # recovery checks. Never change enrollment or force a client disconnect.
     if current and not current['enabled'] and not protected:
         units = ['monitorize-remote-login.service', 'monitorize-vkms-boot-display.service',
                  *(f'monitorize-remote-login-{phase}@{uid}.service' for phase in ('boot', 'desktop'))]
         if any(lifecycle.backend.active(name) for name in units):
-            raise RuntimeError('The installed Monitorize remote-login helpers need updating to pause leftover services. '
-                               'Use Repair remote login in Monitorize Settings, or update the Monitorize package, '
-                               'then retry VKMS Update.')
+            if lifecycle.load() is None:
+                if lifecycle.backend.connection_in_use(uid):
+                    raise RuntimeError('A remote-login client is connected, or its connection state is unavailable. '
+                                       'Disconnect it before retrying VKMS Update. Pairing is retained.')
+                lifecycle.save(dict(uid=uid, operation='upgrade', boot_id=lifecycle.backend.boot_id,
+                    restart=lifecycle.backend.active(units[0]),
+                    masks=[name for name in units if not lifecycle.backend.masked(name)], stage='pausing'))
     lifecycle.prepare('upgrade')
 
 

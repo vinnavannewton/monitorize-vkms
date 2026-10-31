@@ -28,6 +28,7 @@ class UpdateTest(unittest.TestCase):
         self.run_git("-C", str(self.publisher), "config", "commit.gpgsign", "false")
         self.commit("initial")
         self.run_git("clone", str(self.remote), str(self.checkout))
+        self.run_git("-C", str(self.checkout), "config", "commit.gpgsign", "false")
         self.record = self.root / "source-checkout"
         self.record.write_text(str(self.checkout) + "\n")
         self.calls = []
