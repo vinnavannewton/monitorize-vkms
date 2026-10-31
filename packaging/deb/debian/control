@@ -8,6 +8,6 @@ Rules-Requires-Root: no
 
 Package: monitorize-vkms
 Architecture: all
-Depends: ${misc:Depends}, python3 (>= 3.11), python3-dbus, python3-gi, dkms, pkexec, systemd, util-linux
+Depends: ${misc:Depends}, python3 (>= 3.11), python3-dbus, python3-gi, dkms, pkexec, systemd, util-linux, wlr-randr
 Description: Monitorize VKMS host and protected remote-login display support
  Includes DKMS sources and userspace host lifecycle services.

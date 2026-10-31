@@ -108,7 +108,7 @@ sudo reboot
 After reboot, for the standard `linux` kernel:
 
 ```bash
-sudo pacman -S --needed git dkms base-devel linux-headers python python-dbus python-gobject polkit mokutil
+sudo pacman -S --needed git dkms base-devel linux-headers python python-dbus python-gobject polkit mokutil wlr-randr
 ```
 
 Use the header package for your kernel instead of `linux-headers` when needed:
@@ -133,7 +133,7 @@ sudo reboot
 ```
 
 ```bash
-sudo dnf install -y git dkms gcc make "kernel-devel-$(uname -r)" python3 python3-dbus python3-gobject polkit mokutil
+sudo dnf install -y git dkms gcc make "kernel-devel-$(uname -r)" python3 python3-dbus python3-gobject polkit mokutil wlr-randr
 ```
 
 ### Ubuntu / Debian
@@ -147,7 +147,7 @@ sudo reboot
 ```
 
 ```bash
-sudo apt install -y git dkms build-essential "linux-headers-$(uname -r)" python3 python3-dbus python3-gi pkexec mokutil
+sudo apt install -y git dkms build-essential "linux-headers-$(uname -r)" python3 python3-dbus python3-gi pkexec mokutil wlr-randr
 ```
 
 ### openSUSE Tumbleweed
@@ -163,7 +163,7 @@ sudo reboot
 After reboot, for the standard `kernel-default` kernel:
 
 ```bash
-sudo zypper install git dkms gcc make kernel-devel kernel-default-devel python3 pkexec mokutil
+sudo zypper install git dkms gcc make kernel-devel kernel-default-devel python3 pkexec mokutil wlr-randr
 ```
 
 Other kernel flavors need their matching `kernel-<flavor>-devel` package.
@@ -285,3 +285,13 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 `monitorize-vkms uninstall` uses the recorded source checkout (or `--source PATH`)
 and asks for sudo to run its uninstaller. It does not fetch or build. Remove named
 displays and disable remote login first. Reboot afterward to finish module removal.
+
+
+Hyprland VKMS needs **Aquamarine 0.15.1 or newer** for the shared-EGL teardown fix
+([upstream PR #373](https://github.com/hyprwm/aquamarine/pull/373),
+[release v0.15.1](https://github.com/hyprwm/aquamarine/releases/tag/v0.15.1)).
+Check the installed Aquamarine package as well as Hyprland itself. Source
+installation checks for `wlr-randr` before making changes; native packages require
+it. On older distributions, the output adapter also supports the tool's text
+output when `--json` is explicitly unsupported, retaining output identity and
+last-active-output checks.

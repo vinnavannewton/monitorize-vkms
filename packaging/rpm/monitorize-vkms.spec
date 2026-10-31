@@ -9,7 +9,7 @@ BuildArch: noarch
 BuildRequires: python3 >= 3.11
 BuildRequires: python3-dbus, python3-gobject
 Requires: python3 >= 3.11
-Requires: python3-dbus, python3-gobject, dkms, polkit, systemd, util-linux
+Requires: python3-dbus, python3-gobject, dkms, polkit, systemd, util-linux, wlr-randr
 
 %description
 DKMS sources and userspace services for ordinary and protected boot displays.

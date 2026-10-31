@@ -113,18 +113,18 @@ print_dependency_help() {
 	printf '[Monitorize VKMS] The installer will never invoke a package manager or install a kernel.\n' >&2
 	case "$DISTRO_FAMILY" in
 		fedora)
-			printf '[Monitorize VKMS] Fedora: sudo dnf install dkms gcc make kernel-devel-%s python3 python3-dbus python3-gobject polkit\n' "$KERNEL" >&2
+			printf '[Monitorize VKMS] Fedora: sudo dnf install dkms gcc make kernel-devel-%s python3 python3-dbus python3-gobject polkit wlr-randr\n' "$KERNEL" >&2
 			;;
 		debian)
-			printf '[Monitorize VKMS] Debian/Ubuntu: sudo apt install dkms build-essential linux-headers-%s python3 python3-dbus python3-gi pkexec\n' "$KERNEL" >&2
+			printf '[Monitorize VKMS] Debian/Ubuntu: sudo apt install dkms build-essential linux-headers-%s python3 python3-dbus python3-gi pkexec wlr-randr\n' "$KERNEL" >&2
 			;;
 		arch)
 			printf '[Monitorize VKMS] Arch: fully upgrade and reboot first.\n' >&2
-			printf '[Monitorize VKMS] Install: sudo pacman -S --needed dkms base-devel python python-dbus python-gobject polkit <matching-kernel-headers>\n' >&2
+			printf '[Monitorize VKMS] Install: sudo pacman -S --needed dkms base-devel python python-dbus python-gobject polkit wlr-randr <matching-kernel-headers>\n' >&2
 			printf '[Monitorize VKMS] Examples: linux-headers, linux-lts-headers, linux-zen-headers, linux-hardened-headers\n' >&2
 			;;
 		suse)
-			printf '[Monitorize VKMS] openSUSE: run zypper dup and reboot first; then install dkms gcc make kernel-devel kernel-default-devel python3 pkexec.\n' >&2
+			printf '[Monitorize VKMS] openSUSE: run zypper dup and reboot first; then install dkms gcc make kernel-devel kernel-default-devel python3 pkexec wlr-randr.\n' >&2
 			;;
 	esac
 }
@@ -133,7 +133,7 @@ check_prerequisites() {
 	[[ -d /run/systemd/system ]] || die "This source installer requires a running systemd system and systemd-logind"
 	local missing=()
 	local command
-	for command in dkms make gcc install modinfo depmod find sort flock nm grep cmp mktemp chmod mv chown systemctl loginctl setpriv modprobe readlink tr mkdir ln python3 pkexec pkcheck; do
+	for command in dkms make gcc install modinfo depmod find sort flock nm grep cmp mktemp chmod mv chown systemctl loginctl setpriv modprobe readlink tr mkdir ln python3 pkexec pkcheck wlr-randr; do
 		command -v "$command" >/dev/null || missing+=("$command")
 	done
 	python3 -I -c 'import dbus; import gi; gi.require_version("GLib", "2.0"); from gi.repository import GLib' >/dev/null 2>&1 || missing+=("python3-dbus and python3-gobject/gi")

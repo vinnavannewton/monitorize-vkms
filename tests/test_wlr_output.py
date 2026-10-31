@@ -114,3 +114,46 @@ class OutputManagementTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LegacyOutputTests(unittest.TestCase):
+    def text(self,enabled=True,physical=True):
+        return subprocess.CompletedProcess([],0,'Virtual-1 "Monitorize"\n  Enabled: '+('yes' if enabled else 'no')+
+            '\n  Modes:\n    1920x1080 px, 60.000000 Hz (current)\n'+
+            ('eDP-1 "Laptop"\n  Enabled: yes\n' if physical else ''),'')
+
+    @patch.object(wlr_output.shutil,'which',return_value='/usr/bin/wlr-randr')
+    def test_legacy_disable_queries_and_confirms_without_json_after_rejection(self,_which):
+        unsupported=subprocess.CompletedProcess([],1,'',"wlr-randr: unrecognized option '--json'")
+        with patch.object(wlr_output.subprocess,'run',side_effect=[unsupported,self.text(),self.text(),self.text(False)]) as run:
+            self.assertTrue(wlr_output.set_enabled('Virtual-1',False))
+        self.assertEqual([c.args[0][1:] for c in run.call_args_list],[['--json'],[],['--output','Virtual-1','--off'],[]])
+        self.assertTrue(all(c.kwargs['env']['LC_ALL']=='C' for c in run.call_args_list))
+
+    @patch.object(wlr_output.shutil,'which',return_value='/usr/bin/wlr-randr')
+    def test_legacy_last_output_is_never_disabled(self,_which):
+        unsupported=subprocess.CompletedProcess([],1,'',"unknown option '--json'")
+        with patch.object(wlr_output.subprocess,'run',side_effect=[unsupported,self.text(physical=False)]) as run:
+            with self.assertRaisesRegex(CompositorError,'last active'):wlr_output.set_enabled('Virtual-1',False)
+        self.assertEqual(run.call_count,2)
+
+    def test_text_missing_duplicate_or_invalid_enabled_state_refuses(self):
+        for text in ('Virtual-1 "Monitorize"\n',
+                     'Virtual-1 "Monitorize"\n  Enabled: maybe\n',
+                     'Virtual-1 "Monitorize"\n  Enabled: yes\n  Enabled: no\n',
+                     'Virtual-1 "Monitorize"\n  Enabled: yes\nVirtual-1 "Other"\n  Enabled: yes\n',
+                     'garbage\n  Enabled: yes\n'):
+            with self.subTest(text=text),self.assertRaises(CompositorError):wlr_output.text_heads(text)
+
+    @patch.object(wlr_output.shutil,'which',return_value='/usr/bin/wlr-randr')
+    def test_protocol_failure_never_falls_back(self,_which):
+        denied=subprocess.CompletedProcess([],1,'','--json: compositor protocol denied')
+        with patch.object(wlr_output.subprocess,'run',return_value=denied) as run:
+            with self.assertRaises(CompositorError):wlr_output.set_enabled('Virtual-1',False)
+        self.assertEqual(run.call_count,1)
+
+    @patch.object(wlr_output.shutil,'which',return_value='/usr/bin/wlr-randr')
+    def test_malformed_json_never_falls_back(self,_which):
+        with patch.object(wlr_output.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'broken','')) as run:
+            with self.assertRaisesRegex(CompositorError,'valid JSON'):wlr_output.set_enabled('Virtual-1',False)
+        self.assertEqual(run.call_count,1)

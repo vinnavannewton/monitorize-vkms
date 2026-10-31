@@ -51,3 +51,13 @@ class HostDeliveryTests(unittest.TestCase):
         with patch.object(maintenance,'read_enrollment',return_value=None), \
              patch.object(maintenance,'read_lease',return_value=None):
             maintenance.assert_removal_safe()
+
+
+class WlrDependencyDeliveryTests(unittest.TestCase):
+    def test_native_runtime_packages_require_wlr_randr(self):
+        arch=(ROOT/'packaging/arch/PKGBUILD').read_text().split('makedepends=',1)[0]
+        self.assertIn("'wlr-randr'",arch.split('depends=',1)[1])
+        control=(ROOT/'packaging/deb/debian/control').read_text().split('\nDepends:',1)[1]
+        self.assertIn('wlr-randr',control.split('\n\n',1)[0])
+        rpm=(ROOT/'packaging/rpm/monitorize-vkms.spec').read_text()
+        self.assertRegex(rpm,r'(?m)^Requires:.*\bwlr-randr\b')

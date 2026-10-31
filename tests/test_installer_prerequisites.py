@@ -57,7 +57,7 @@ class InstallerPrerequisitesTest(unittest.TestCase):
             )
 
     def test_missing_commands(self):
-        for missing in ("dkms", "gcc", "make", "python3", "pkexec", "systemctl", "modprobe"):
+        for missing in ("dkms", "gcc", "make", "python3", "pkexec", "systemctl", "modprobe", "wlr-randr"):
             with self.subTest(missing=missing):
                 result = self.run_check(absent=(missing,))
                 self.assertNotEqual(result.returncode, 0)
