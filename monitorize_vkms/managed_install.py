@@ -14,6 +14,26 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class ExpiredMaintenance(RuntimeError):
+    """Structured request for a user-approved recovery, never a shell command."""
+
+
+def check_receipt(lifecycle, uid):
+    receipt = lifecycle.load()
+    if receipt and receipt['uid'] != uid:
+        raise PermissionError('Maintenance belongs to another account.')
+    return receipt
+
+
+def resume_expired(lifecycle, uid):
+    receipt = check_receipt(lifecycle, uid)
+    if receipt:
+        if receipt['boot_id'] == lifecycle.backend.boot_id:
+            raise RuntimeError('Maintenance changed during recovery. Refresh status before retrying.')
+        lifecycle.resume()
+    return dict(success=True, message='Expired maintenance cleared. Retrying VKMS operation…')
+
+
 def check_idle():
     """Called by install.sh while its global lifecycle lock is held."""
     sys.path.insert(0, str(ROOT))
@@ -86,7 +106,7 @@ def prepare_lifecycle(lifecycle, uid):
     lifecycle.prepare('upgrade')
 
 
-def remote_lifecycle(uid):
+def installed_lifecycle(uid):
     """Use the existing root-installed pause/release/resume implementation."""
     settings = Path('/etc/monitorize/remote-login.json')
     if not settings.exists():
@@ -99,8 +119,42 @@ def remote_lifecycle(uid):
     sys.path.insert(0, str(library))
     from monitorize.remote_login.package_lifecycle import PackageLifecycle, InstalledBackend
     lifecycle = PackageLifecycle(InstalledBackend())
-    prepare_lifecycle(lifecycle, uid)
+    current, _ = lifecycle.backend.state()
+    if current and current['uid'] != uid:
+        raise PermissionError('Only the enrolled account can recover this host.')
     return lifecycle
+
+
+def remote_lifecycle(uid):
+    lifecycle = installed_lifecycle(uid)
+    if lifecycle is None:
+        return None
+    from monitorize.remote_login.live_setup import setup_lock
+    with setup_lock():
+        prepare_current(lifecycle, uid)
+    return lifecycle
+
+
+def prepare_current(lifecycle, uid):
+    receipt = check_receipt(lifecycle, uid)
+    if receipt and receipt['boot_id'] != lifecycle.backend.boot_id:
+        raise ExpiredMaintenance('Remote-login maintenance from a previous boot needs recovery before continuing.')
+    prepare_lifecycle(lifecycle, uid)
+
+
+def recover_expired(revision, uid):
+    validate_source(revision, uid)
+    # Serialize with other setup/package recovery and revalidate the receipt
+    # after authorization. Never resume a new current-boot transaction by race.
+    lifecycle = installed_lifecycle(uid)
+    if lifecycle is None:
+        return dict(success=True, message='No maintenance remains.')
+    from monitorize.remote_login.live_setup import setup_lock
+    with setup_lock():
+        current, _ = lifecycle.backend.state()
+        if current and current['uid'] != uid:
+            raise PermissionError('Enrollment changed during maintenance recovery.')
+        return resume_expired(lifecycle, uid)
 
 
 def install(revision, uid):
@@ -142,7 +196,7 @@ def install(revision, uid):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('install', 'check-idle'))
+    parser.add_argument('action', choices=('install', 'check-idle', 'resume-expired'))
     parser.add_argument('--revision')
     args = parser.parse_args()
     try:
@@ -155,7 +209,11 @@ def main():
         if uid <= 0:
             raise PermissionError('Start Update from the desktop application.')
         print(json.dumps(dict(management_started=True)), flush=True)
-        result = install(args.revision or '', uid)
+        result = (recover_expired(args.revision or '', uid) if args.action == 'resume-expired'
+                  else install(args.revision or '', uid))
+    except ExpiredMaintenance as error:
+        result = dict(success=False, cleanup_pending=True,
+                      recovery_required='resume_expired', message=str(error))
     except Exception as error:
         result = dict(success=False, cleanup_pending=Path('/var/lib/monitorize/remote-login-package.json').exists(), message=str(error))
     print(json.dumps(result), flush=True)

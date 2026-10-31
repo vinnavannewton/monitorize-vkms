@@ -129,3 +129,90 @@ class LifecycleCompatibilityTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, 'internal failure'):
             m.prepare_lifecycle(lifecycle, 1000)
         self.assertEqual(calls, ['upgrade'])
+
+
+class ExpiredMaintenanceTests(unittest.TestCase):
+    def lifecycle(self, receipt):
+        lifecycle=Mock()
+        lifecycle.load.return_value=receipt
+        lifecycle.backend.boot_id='current'
+        return lifecycle
+
+    def test_previous_boot_reports_recoverable_code_before_prepare(self):
+        lifecycle=self.lifecycle(dict(uid=1000,boot_id='previous'))
+        with patch.object(m,'prepare_lifecycle') as prepare:
+            with self.assertRaises(m.ExpiredMaintenance):m.prepare_current(lifecycle,1000)
+        prepare.assert_not_called()
+        lifecycle.resume.assert_not_called()
+
+    def test_same_boot_uses_existing_prepare(self):
+        lifecycle=self.lifecycle(dict(uid=1000,boot_id='current'))
+        with patch.object(m,'prepare_lifecycle') as prepare:m.prepare_current(lifecycle,1000)
+        prepare.assert_called_once_with(lifecycle,1000)
+
+    def test_resume_expired_only_calls_installed_resume(self):
+        lifecycle=self.lifecycle(dict(uid=1000,boot_id='previous'))
+        self.assertTrue(m.resume_expired(lifecycle,1000)['success'])
+        lifecycle.resume.assert_called_once_with()
+        lifecycle.prepare.assert_not_called()
+
+    def test_no_receipt_is_idempotent(self):
+        lifecycle=self.lifecycle(None)
+        self.assertTrue(m.resume_expired(lifecycle,1000)['success'])
+        lifecycle.resume.assert_not_called()
+
+    def test_current_boot_replacement_receipt_refuses_resume(self):
+        lifecycle=self.lifecycle(dict(uid=1000,boot_id='current'))
+        with self.assertRaisesRegex(RuntimeError,'changed'):m.resume_expired(lifecycle,1000)
+        lifecycle.resume.assert_not_called()
+
+    def test_other_user_receipt_never_prepares_or_resumes(self):
+        lifecycle=self.lifecycle(dict(uid=2000,boot_id='previous'))
+        with self.assertRaises(PermissionError):m.prepare_current(lifecycle,1000)
+        with self.assertRaises(PermissionError):m.resume_expired(lifecycle,1000)
+        lifecycle.resume.assert_not_called()
+
+    def test_root_response_exposes_action_not_command(self):
+        import contextlib,io,json
+        with patch.object(m.os,'geteuid',return_value=0),patch.dict(m.os.environ,PKEXEC_UID='1000'), \
+             patch.object(m.sys,'argv',['helper','install','--revision','a'*40]), \
+             patch.object(m,'install',side_effect=m.ExpiredMaintenance('Expired maintenance')), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(m.main(),1)
+        result=json.loads(output.getvalue().splitlines()[-1])
+        self.assertEqual(result['recovery_required'],'resume_expired')
+        self.assertNotIn('command',result)
+
+    def test_recovery_revalidates_owner_under_setup_lock(self):
+        from contextlib import contextmanager
+        lifecycle=self.lifecycle(dict(uid=1000,boot_id='previous'))
+        lifecycle.backend.state.return_value=({'uid':2000},False)
+        events=[]
+        @contextmanager
+        def lock():
+            events.append('locked')
+            yield
+            events.append('unlocked')
+        with patch.object(m,'validate_source') as validate, \
+             patch.object(m,'installed_lifecycle',return_value=lifecycle), \
+             patch.dict(m.sys.modules,{'monitorize.remote_login.live_setup':SimpleNamespace(setup_lock=lock)}):
+            with self.assertRaisesRegex(PermissionError,'changed'):m.recover_expired('a'*40,1000)
+        validate.assert_called_once_with('a'*40,1000)
+        lifecycle.resume.assert_not_called()
+        self.assertEqual(events[0],'locked')
+
+    def test_recovery_executes_resume_inside_setup_lock(self):
+        from contextlib import contextmanager
+        lifecycle=self.lifecycle(dict(uid=1000,boot_id='previous'))
+        lifecycle.backend.state.return_value=({'uid':1000},False)
+        events=[]
+        @contextmanager
+        def lock():
+            events.append('locked')
+            yield
+            events.append('unlocked')
+        lifecycle.resume.side_effect=lambda:events.append('resume')
+        with patch.object(m,'validate_source'),patch.object(m,'installed_lifecycle',return_value=lifecycle), \
+             patch.dict(m.sys.modules,{'monitorize.remote_login.live_setup':SimpleNamespace(setup_lock=lock)}):
+            self.assertTrue(m.recover_expired('a'*40,1000)['success'])
+        self.assertEqual(events,['locked','resume','unlocked'])
