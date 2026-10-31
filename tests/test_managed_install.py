@@ -37,3 +37,64 @@ class ManagedInstallTests(unittest.TestCase):
         self.assertFalse(result['success'])
         self.assertEqual(len(run.call_args_list), 1)
         self.assertEqual(run.call_args.args[0][1], 'is-active')
+
+
+class LifecycleCompatibilityTests(unittest.TestCase):
+    def lifecycle(self, *, modern=False, enabled=True, protected=False, active=False, uid=1000):
+        events = []
+        if modern:
+            def prepare(operation, *, include_idle_services=False):
+                events.append((operation, include_idle_services))
+        else:
+            def prepare(operation, *, allow_disconnect=False):
+                events.append((operation, allow_disconnect))
+        backend = Mock()
+        backend.state.return_value = ({'uid': uid, 'enabled': enabled}, protected)
+        backend.active.return_value = active
+        return SimpleNamespace(backend=backend, prepare=prepare), events
+
+    def test_modern_helper_includes_disabled_idle_services(self):
+        lifecycle, events = self.lifecycle(modern=True, enabled=False, active=True)
+        m.prepare_lifecycle(lifecycle, 1000)
+        self.assertEqual(events, [('upgrade', True)])
+
+    def test_legacy_enabled_helper_uses_supported_signature(self):
+        lifecycle, events = self.lifecycle(active=True)
+        m.prepare_lifecycle(lifecycle, 1000)
+        self.assertEqual(events, [('upgrade', False)])
+        lifecycle.backend.active.assert_not_called()
+
+    def test_legacy_disabled_idle_helper_is_safe_without_services(self):
+        lifecycle, events = self.lifecycle(enabled=False)
+        m.prepare_lifecycle(lifecycle, 1000)
+        self.assertEqual(events, [('upgrade', False)])
+        self.assertEqual(lifecycle.backend.active.call_count, 4)
+
+    def test_legacy_protected_output_still_uses_ownership_pause(self):
+        lifecycle, events = self.lifecycle(enabled=False, protected=True, active=True)
+        m.prepare_lifecycle(lifecycle, 1000)
+        self.assertEqual(events, [('upgrade', False)])
+        lifecycle.backend.active.assert_not_called()
+
+    def test_legacy_disabled_live_services_require_repair_before_mutation(self):
+        lifecycle, events = self.lifecycle(enabled=False, active=True)
+        with self.assertRaisesRegex(RuntimeError, 'Repair remote login'):
+            m.prepare_lifecycle(lifecycle, 1000)
+        self.assertEqual(events, [])
+
+    def test_foreign_enrollment_refused_before_prepare(self):
+        lifecycle, events = self.lifecycle(uid=2000)
+        with self.assertRaises(PermissionError):
+            m.prepare_lifecycle(lifecycle, 1000)
+        self.assertEqual(events, [])
+
+    def test_type_error_inside_modern_prepare_is_not_retried(self):
+        calls = []
+        def prepare(operation, *, include_idle_services=False):
+            calls.append(operation)
+            raise TypeError('internal failure after pause')
+        lifecycle, _ = self.lifecycle(modern=True)
+        lifecycle.prepare = prepare
+        with self.assertRaisesRegex(TypeError, 'internal failure'):
+            m.prepare_lifecycle(lifecycle, 1000)
+        self.assertEqual(calls, ['upgrade'])

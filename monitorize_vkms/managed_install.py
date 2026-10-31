@@ -1,6 +1,7 @@
 """Explicit GUI-authorized source installation, retaining remote-login lifecycle."""
 import argparse
 import fcntl
+import inspect
 import json
 import os
 from pathlib import Path
@@ -59,6 +60,27 @@ def validate_source(revision, uid):
         raise ValueError('The source checkout changed after Update. Retry from a clean official main checkout.')
 
 
+def prepare_lifecycle(lifecycle, uid):
+    """Accept older installed helpers without skipping their ownership guards."""
+    current, protected = lifecycle.backend.state()
+    if current and current['uid'] != uid:
+        raise PermissionError('Only the enrolled account can update this host.')
+    if 'include_idle_services' in inspect.signature(lifecycle.prepare).parameters:
+        lifecycle.prepare('upgrade', include_idle_services=True)
+        return
+    # Older helpers already pause enabled/protected enrollments. They skip
+    # disabled enrollments entirely, so do not proceed with leftover services
+    # in that case. Never retry TypeError: it could follow a partial mutation.
+    if current and not current['enabled'] and not protected:
+        units = ['monitorize-remote-login.service', 'monitorize-vkms-boot-display.service',
+                 *(f'monitorize-remote-login-{phase}@{uid}.service' for phase in ('boot', 'desktop'))]
+        if any(lifecycle.backend.active(name) for name in units):
+            raise RuntimeError('The installed Monitorize remote-login helpers need updating to pause leftover services. '
+                               'Use Repair remote login in Monitorize Settings, or update the Monitorize package, '
+                               'then retry VKMS Update.')
+    lifecycle.prepare('upgrade')
+
+
 def remote_lifecycle(uid):
     """Use the existing root-installed pause/release/resume implementation."""
     settings = Path('/etc/monitorize/remote-login.json')
@@ -72,10 +94,7 @@ def remote_lifecycle(uid):
     sys.path.insert(0, str(library))
     from monitorize.remote_login.package_lifecycle import PackageLifecycle, InstalledBackend
     lifecycle = PackageLifecycle(InstalledBackend())
-    current, _ = lifecycle.backend.state()
-    if current and current['uid'] != uid:
-        raise PermissionError('Only the enrolled account can update this host.')
-    lifecycle.prepare('upgrade', include_idle_services=True)
+    prepare_lifecycle(lifecycle, uid)
     return lifecycle
 
 
