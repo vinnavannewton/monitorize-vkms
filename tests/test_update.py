@@ -24,6 +24,8 @@ class UpdateTest(unittest.TestCase):
         self.run_git("-C", str(self.publisher), "config", "user.name", "Updater Test")
         self.run_git("-C", str(self.publisher), "config", "user.email", "test@example.invalid")
         (self.publisher / "install.sh").write_text("#!/bin/sh\nexit 0\n")
+        (self.publisher / "uninstall.sh").write_text("#!/bin/sh\nexit 0\n")
+        self.run_git("-C", str(self.publisher), "config", "commit.gpgsign", "false")
         self.commit("initial")
         self.run_git("clone", str(self.remote), str(self.checkout))
         self.record = self.root / "source-checkout"
@@ -78,6 +80,14 @@ class UpdateTest(unittest.TestCase):
     def assert_no_install(self):
         self.assertFalse(any(call[0] == "sudo" for call in self.calls))
 
+    def test_uninstall_runs_existing_script_without_fetch_or_build(self):
+        result, output, errors = self.run_update(["uninstall"])
+        self.assertEqual(result, 0, errors)
+        self.assertEqual(self.calls[-1], ["sudo", "--", str(self.checkout / "uninstall.sh")])
+        self.assertFalse(any("fetch" in call for call in self.calls))
+        self.assertIn("uninstalled", output)
+        self.assertNotIn("Matching headers", output)
+
     def test_fast_forward_and_install_from_saved_path(self):
         (self.publisher / "new-file").write_text("new release")
         self.commit("release")
@@ -87,11 +97,11 @@ class UpdateTest(unittest.TestCase):
         self.assertEqual(self.calls[-1], ["sudo", "--", str(self.checkout / "install.sh")])
         self.assertIn("Reboot to activate", output)
 
-    def test_unchanged_source_skips_installation(self):
+    def test_unchanged_source_still_updates_installed_files(self):
         result, output, errors = self.run_update()
         self.assertEqual(result, 0, errors)
-        self.assertIn("Already up to date. Installation skipped", output)
-        self.assert_no_install()
+        self.assertIn("Source is already up to date", output)
+        self.assertEqual(self.calls[-1], ["sudo", "--", str(self.checkout / "install.sh")])
 
     def test_reinstall_installs_without_fetching_or_merging(self):
         # Reinstall works even when the remote is unavailable or has new commits.
@@ -177,7 +187,7 @@ class UpdateTest(unittest.TestCase):
         self.commit("release")
         result, output, errors = self.run_update()
         self.assertEqual(result, 7)
-        self.assertIn("Installation failed", errors)
+        self.assertIn("Update failed", errors)
         self.assertIn("monitorize-vkms reinstall", errors)
         self.assertNotIn("Reboot to activate", output)
         self.calls.clear()

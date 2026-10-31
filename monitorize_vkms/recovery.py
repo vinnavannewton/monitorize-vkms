@@ -14,6 +14,7 @@ if __name__=='__main__':
     sys.path.insert(0,str(here.parents[2]/'lib/monitorize-vkms') if here.parent.name=='monitorize-vkms' else str(here.parents[1]))
 
 PROTOCOL=1
+RESTART_PROTOCOL=1
 GATE=Path('/run/monitorize-vkms/recovery.json')
 
 
@@ -39,7 +40,7 @@ def check_admission():
 class Recovery:
     def __init__(self,backend):self.backend=backend
 
-    def run(self,uid):
+    def run(self,uid,*,restart_only=False):
         backend=self.backend
         lock=backend.lock()
         try:
@@ -53,7 +54,7 @@ class Recovery:
         # The bootstrap acquires the same lifecycle lock itself. Admission remains
         # blocked by the private receipt while the caller releases that lock.
         try:
-            if not facts.get('topology_ready'):backend.bootstrap()
+            if not restart_only and not facts.get('topology_ready'):backend.bootstrap()
             backend.restart_service()
             lock=backend.lock(token)
             try:
@@ -96,10 +97,10 @@ class InstalledBackend:
     def unlock(self,fd):os.close(fd)
 
     def inspect(self,uid):
-        from monitorize_vkms.lease import read_lease
+        from monitorize_vkms.lease import read_lease, named_slots
         from monitorize_vkms.protocols import installed_capabilities
         self.helper._active_session(uid)
-        leases=[read_lease(self.helper.STATE_DIRECTORY,slot) for slot in ('mon1','mon2')]
+        leases=[read_lease(self.helper.STATE_DIRECTORY,slot) for slot in ('mon1','mon2',*named_slots(self.helper.STATE_DIRECTORY))]
         busy=any(lease is not None for lease in leases)
         # Check directly enabled connectors too: do not trust lease absence alone.
         for connector in Path('/sys/class/drm').glob('card*-*'):
@@ -148,13 +149,13 @@ class InstalledBackend:
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=('diagnose','recover'))
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=('diagnose','recover','restart'))
     args=parser.parse_args()
     try:
         raw=os.environ.get('PKEXEC_UID','')
         if os.geteuid()!=0 or not raw.isdecimal() or int(raw)<=0:raise ValueError('Authorize host recovery through Polkit.')
         backend=InstalledBackend()
-        if args.action=='recover':result=Recovery(backend).run(int(raw))
+        if args.action in ('recover','restart'):result=Recovery(backend).run(int(raw),restart_only=args.action=='restart')
         else:
             lock=backend.lock()
             try:result=dict(success=True,recovery_protocol=PROTOCOL,facts=backend.inspect(int(raw)))

@@ -134,6 +134,7 @@ restore_modprobe_configuration() {
 			rm -f -- "$MODPROBE_CONFIG"
 		fi
 	fi
+	rm -f -- "${STATE_DIR}/reboot-required.json"
 	rmdir "$STATE_DIR" 2>/dev/null || true
 }
 
@@ -154,7 +155,7 @@ remove_cli_and_tools() {
 	if command -v systemctl >/dev/null; then
 		systemctl stop monitorize-vkms.service >/dev/null 2>&1 || true
 	fi
-	rm -f -- "$CLI_PATH" "$POLKIT_POLICY_PATH" "$HELPER_PATH" "$AUTHORIZATION_PATH" "$DBUS_PATH" \
+	rm -f -- "/usr/libexec/monitorize-vkms/monitorize-vkms-recovery" "$CLI_PATH" "$POLKIT_POLICY_PATH" "$HELPER_PATH" "$AUTHORIZATION_PATH" "$DBUS_PATH" \
 		"$DBUS_UNIT_PATH" "$DBUS_ACTIVATION_PATH" "$DBUS_POLICY_PATH" "$DBUS_INTERFACE_PATH"
 	if command -v systemctl >/dev/null; then
 		systemctl daemon-reload || warn 'systemd daemon-reload failed'
@@ -198,6 +199,7 @@ main() {
 	command -v modinfo >/dev/null || die "modinfo is required"
 	command -v flock >/dev/null || die "flock is required"
 	acquire_global_lock
+	/usr/bin/python3 -I "$(dirname -- "${BASH_SOURCE[0]}")/monitorize_vkms/package_maintenance.py" pre-remove
 	remove_bootstrap_service
 	remove_cli_and_tools
 	rm -f -- /usr/share/monitorize-vkms/capabilities.json

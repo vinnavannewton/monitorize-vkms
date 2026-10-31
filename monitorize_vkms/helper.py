@@ -31,6 +31,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(package_root))
 
 from monitorize_vkms.configfs import CONFIGFS_SUBSYSTEM
+from monitorize_vkms.names import named_slot
 
 BOOT_DISPLAY_PROTOCOL = 1
 
@@ -519,6 +520,9 @@ def _require_bootstrap(root: Path, logs: list[str], slot: str = "mon1") -> tuple
         raise VkmsHelperError(
             "Monitorize VKMS bootstrap is not initialized. Reboot after installing monitorize-vkms."
         )
+    if named_slot(slot):
+        from monitorize_vkms.named import require_topology
+        return require_topology(root, slot, logs)
     if slot not in INSTANCE_NAMES:
         raise VkmsHelperError("Display must be mon1 or mon2.")
     instance = root / CONFIGFS_SUBSYSTEM / "monitorize"
@@ -692,13 +696,146 @@ def _select_available_slot(root: Path, logs: list[str]) -> str:
     raise VkmsHelperError("Both Monitorize virtual displays are occupied or reserved.")
 
 
+def _create_request(args, root, logs, uid, session_id, env):
+    """Shared mode/identity/activation transaction for managed and named outputs."""
+    response = dict(success=True, operation=args.operation, slot=args.slot)
+    changed = False
+    if args.slot == "auto":
+        args.slot = _select_available_slot(root, logs)
+    instance, connector = _require_bootstrap(root, logs, args.slot)
+    response["slot"] = args.slot
+    response["instance"] = str(instance)
+    existing = _read_lease(args.slot)
+    if existing and existing.get("protected") is True:
+        raise ProtectedDisplayError("mon1 is managed by remote login and cannot be replaced by ordinary create.")
+    if args.mode is not None:
+        args.mode = _validate_requested_mode(args.mode)
+    if args.mode is None:
+        raise VkmsHelperError("Display creation requires a requested mode.")
+    custom_edid = None
+    if args.operation == "create" and args.mode is not None:
+        from monitorize_vkms.edid import generate_edid
+        custom_edid = generate_edid(int(args.mode[0]), int(args.mode[1]), args.mode[2], args.slot, label=getattr(args, "display_name", None))
+    if args.operation == "create-custom":
+        if not args.edid_base64:
+            raise VkmsHelperError("Custom VKMS creation requires an EDID payload.")
+        try:
+            custom_edid = base64.b64decode(args.edid_base64, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise VkmsHelperError("Custom VKMS EDID payload is not valid base64.") from exc
+        _validate_edid(custom_edid)
+        if args.mode is None or len(args.mode) != 3:
+            raise VkmsHelperError("Custom VKMS creation requires the requested display mode.")
+        _validate_edid_mode(custom_edid, args.mode)
+        from monitorize_vkms.edid import generate_edid
+        if custom_edid != generate_edid(int(args.mode[0]), int(args.mode[1]), args.mode[2], args.slot, label=getattr(args, "display_name", None)):
+            raise VkmsHelperError("EDID does not match the requested Monitorize display ID and mode.")
+        args.mode = [int(args.mode[0]), int(args.mode[1]), args.mode[2]]
+    connected = _read(connector / "status") == CONNECTOR_STATUS_CONNECTED
+    lease = _read_lease(args.slot)
+    if lease and (lease.get("kind") == "boot" or lease.get("protected")):
+        raise VkmsHelperError("Boot remote-login output is reserved; use the managed handoff instead.")
+    digest = hashlib.sha256(custom_edid or b"").hexdigest()
+    if connected:
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        if _lease_matches_request(lease, uid=uid, session=session_id, boot_id=boot_id,
+                                  edid_sha256=digest, mode=args.mode):
+            from monitorize_vkms.drm import monitorize_drm_connectors
+            current = monitorize_drm_connectors().get(lease.get("connector"))
+            if (not current or current.get("status") != "connected"
+                    or current.get("connector_id") != lease.get("connector_id")
+                    or current.get("card") != lease.get("card")
+                    or current.get("display") != args.slot
+                    or current.get("edid_sha256") != digest):
+                raise VkmsHelperError("Owned display's DRM connector identity is missing or changed.")
+            response.update({"changed": False, "created": False, "generation": lease["generation"],
+                             "connector": lease.get("connector"), "card": lease.get("card"),
+                             "compositor": lease.get("desktop"), "compositor_details": {}})
+            response["logs"] = logs + ["Identical owned display already exists; leaving its generation unchanged"]
+            return response
+        raise VkmsHelperError("A connected Monitorize output is already present but cannot be safely replaced or claimed. Remove it from its owning session first.")
+    if lease and lease.get("state") not in ("active", "pending"):
+        raise VkmsHelperError("Monitorize VKMS ownership state is inconsistent; refusing another create.")
+    from monitorize_vkms.drm import monitorize_drm_connectors
+    before = [item for item in monitorize_drm_connectors().values()
+              if item.get("display") == args.slot and item.get("status") == "connected"]
+    if before:
+        raise VkmsHelperError(f"{args.slot}'s DRM connector is already connected.")
+    snapshot = _run_worker(uid, env, {"action": "snapshot"})
+    desktop = snapshot.get("desktop")
+    _validate_compositor_support(desktop, env)
+    if desktop is not None and args.mode is None:
+        raise VkmsHelperError("Graphical display creation requires a requested mode for verified activation.")
+    generation = secrets.token_hex(16)
+    lease = {
+        "uid": uid, "session": session_id, "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+        "generation": generation, "state": "pending", "edid_sha256": digest,
+        "desktop": snapshot.get("desktop"), "mode": args.mode,
+    }
+    if getattr(args, 'display_name', None) is not None:
+        lease.update(name=args.display_name, slot=args.slot)
+    _write_lease(lease, args.slot)
+    changed = _enable_connector(connector, logs, custom_edid)
+    deadline = time.monotonic() + 8.0
+    drm_connector = None
+    while time.monotonic() < deadline:
+        current = monitorize_drm_connectors()
+        candidates = [item for item in current.values()
+                      if item.get("display") == args.slot
+                      and item.get("status") == "connected"
+                      and item.get("edid_sha256") == digest]
+        if len(candidates) == 1:
+            drm_connector = candidates[0]
+            break
+        if len(candidates) > 1:
+            raise VkmsHelperError(f"Multiple DRM connectors match {args.slot}; refusing activation.")
+        time.sleep(0.1)
+    if not drm_connector:
+        raise VkmsHelperError("Monitorize VKMS connected, but its DRM connector did not appear; it remains connected for safe recovery.")
+    if type(drm_connector.get("connector_id")) is not int or drm_connector["connector_id"] <= 0:
+        raise VkmsHelperError("Monitorize DRM connector has no reliable object identity; it remains connected for safe recovery.")
+    lease.update({"connector": drm_connector["name"], "card": drm_connector["card"],
+                  "connector_id": drm_connector.get("connector_id")})
+    _write_lease(lease, args.slot)
+    if args.mode:
+        width, height, refresh = args.mode
+        mode_deadline = time.monotonic() + 5.0
+        while (f"{width}x{height}" not in drm_connector.get("modes", [])
+               and time.monotonic() < mode_deadline):
+            time.sleep(0.1)
+            refreshed = monitorize_drm_connectors().get(drm_connector["name"])
+            if refreshed and refreshed.get("connector_id") == drm_connector.get("connector_id"):
+                drm_connector = refreshed
+        if f"{width}x{height}" not in drm_connector.get("modes", []):
+            raise VkmsHelperError("Requested mode was not published by the Monitorize DRM connector; it remains connected for safe recovery.")
+        worker_result = _run_worker(uid, env, {
+            "action": "activate", "name": drm_connector["name"],
+            "connector_id": drm_connector.get("connector_id"), "card": drm_connector["card"], "mode": args.mode,
+            "snapshot": snapshot.get("state"),
+        })
+        lease["state"] = "active"
+        lease["desktop"] = worker_result.get("desktop")
+        _write_lease(lease, args.slot)
+        response["compositor"] = worker_result.get("desktop")
+        response["compositor_details"] = worker_result.get("details", {})
+    else:
+        lease["state"] = "active"
+        _write_lease(lease, args.slot)
+    response.update({"changed": changed, "created": True, "generation": generation,
+                     "connector": drm_connector["name"], "card": drm_connector["card"]})
+    response.setdefault('changed', changed)
+    response['logs'] = logs
+    return response
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage Monitorize's fixed VKMS configfs instances.")
-    parser.add_argument("operation", nargs="?", choices=("create", "create-custom", "destroy", "destroy-all", "status", "capability"))
+    parser.add_argument("operation", nargs="?", choices=("create", "create-custom", "destroy", "destroy-all", "status", "capability", "create-named", "destroy-named", "destroy-all-named", "list-named"))
     parser.add_argument("--slot", choices=(*INSTANCE_NAMES, "auto"), default="mon1")
     parser.add_argument("edid_base64", nargs="?")
     parser.add_argument("--mode", nargs=3, type=float, metavar=("WIDTH", "HEIGHT", "REFRESH"))
     parser.add_argument("--generation")
+    parser.add_argument("--name")
     parser.add_argument("--worker", action="store_true")
     args = parser.parse_args()
     if args.worker:
@@ -710,6 +847,11 @@ def main() -> int:
         parser.error("an operation is required")
 
     logs: list[str] = []
+    if args.operation in ('create-named', 'destroy-named', 'destroy-all-named', 'list-named'):
+        from monitorize_vkms.named import dispatch
+        response = dispatch(args, logs)
+        print(json.dumps(response))
+        return 0 if response['success'] else 1
     try:
         root = _configfs_root(logs)
         instance, connector = _require_bootstrap(root, logs)
@@ -742,127 +884,8 @@ def main() -> int:
                 session_id, env = _active_session(uid, allow_inactive=True)
             else:
                 session_id, env = _active_session(uid)
-            if args.slot == "auto":
-                args.slot = _select_available_slot(root, logs)
-            instance, connector = _require_bootstrap(root, logs, args.slot)
-            response["slot"] = args.slot
-            existing = _read_lease(args.slot)
-            if existing and existing.get("protected") is True:
-                raise ProtectedDisplayError("mon1 is managed by remote login and cannot be replaced by ordinary create.")
-            if args.mode is not None:
-                args.mode = _validate_requested_mode(args.mode)
-            if args.mode is None:
-                raise VkmsHelperError("Display creation requires a requested mode.")
-            custom_edid = None
-            if args.operation == "create" and args.mode is not None:
-                from monitorize_vkms.edid import generate_edid
-                custom_edid = generate_edid(int(args.mode[0]), int(args.mode[1]), args.mode[2], args.slot)
-            if args.operation == "create-custom":
-                if not args.edid_base64:
-                    raise VkmsHelperError("Custom VKMS creation requires an EDID payload.")
-                try:
-                    custom_edid = base64.b64decode(args.edid_base64, validate=True)
-                except (ValueError, TypeError) as exc:
-                    raise VkmsHelperError("Custom VKMS EDID payload is not valid base64.") from exc
-                _validate_edid(custom_edid)
-                if args.mode is None or len(args.mode) != 3:
-                    raise VkmsHelperError("Custom VKMS creation requires the requested display mode.")
-                _validate_edid_mode(custom_edid, args.mode)
-                from monitorize_vkms.edid import generate_edid
-                if custom_edid != generate_edid(int(args.mode[0]), int(args.mode[1]), args.mode[2], args.slot):
-                    raise VkmsHelperError("EDID does not match the requested Monitorize display ID and mode.")
-                args.mode = [int(args.mode[0]), int(args.mode[1]), args.mode[2]]
-            connected = _read(connector / "status") == CONNECTOR_STATUS_CONNECTED
-            lease = _read_lease(args.slot)
-            if lease and (lease.get("kind") == "boot" or lease.get("protected")):
-                raise VkmsHelperError("Boot remote-login output is reserved; use the managed handoff instead.")
-            digest = hashlib.sha256(custom_edid or b"").hexdigest()
-            if connected:
-                boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-                if _lease_matches_request(lease, uid=uid, session=session_id, boot_id=boot_id,
-                                          edid_sha256=digest, mode=args.mode):
-                    from monitorize_vkms.drm import monitorize_drm_connectors
-                    current = monitorize_drm_connectors().get(lease.get("connector"))
-                    if (not current or current.get("status") != "connected"
-                            or current.get("connector_id") != lease.get("connector_id")
-                            or current.get("card") != lease.get("card")
-                            or current.get("display") != args.slot
-                            or current.get("edid_sha256") != digest):
-                        raise VkmsHelperError("Owned display's DRM connector identity is missing or changed.")
-                    response.update({"changed": False, "created": False, "generation": lease["generation"],
-                                     "connector": lease.get("connector"), "card": lease.get("card"),
-                                     "compositor": lease.get("desktop"), "compositor_details": {}})
-                    response["logs"] = logs + ["Identical owned display already exists; leaving its generation unchanged"]
-                    print(json.dumps(response))
-                    return 0
-                raise VkmsHelperError("A connected Monitorize output is already present but cannot be safely replaced or claimed. Remove it from its owning session first.")
-            if lease and lease.get("state") not in ("active", "pending"):
-                raise VkmsHelperError("Monitorize VKMS ownership state is inconsistent; refusing another create.")
-            from monitorize_vkms.drm import monitorize_drm_connectors
-            before = [item for item in monitorize_drm_connectors().values()
-                      if item.get("display") == args.slot and item.get("status") == "connected"]
-            if before:
-                raise VkmsHelperError(f"{args.slot}'s DRM connector is already connected.")
-            snapshot = _run_worker(uid, env, {"action": "snapshot"})
-            desktop = snapshot.get("desktop")
-            _validate_compositor_support(desktop, env)
-            if desktop is not None and args.mode is None:
-                raise VkmsHelperError("Graphical display creation requires a requested mode for verified activation.")
-            generation = secrets.token_hex(16)
-            lease = {
-                "uid": uid, "session": session_id, "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
-                "generation": generation, "state": "pending", "edid_sha256": digest,
-                "desktop": snapshot.get("desktop"), "mode": args.mode,
-            }
-            _write_lease(lease, args.slot)
-            changed = _enable_connector(connector, logs, custom_edid)
-            deadline = time.monotonic() + 8.0
-            drm_connector = None
-            while time.monotonic() < deadline:
-                current = monitorize_drm_connectors()
-                candidates = [item for item in current.values()
-                              if item.get("display") == args.slot
-                              and item.get("status") == "connected"
-                              and item.get("edid_sha256") == digest]
-                if len(candidates) == 1:
-                    drm_connector = candidates[0]
-                    break
-                if len(candidates) > 1:
-                    raise VkmsHelperError(f"Multiple DRM connectors match {args.slot}; refusing activation.")
-                time.sleep(0.1)
-            if not drm_connector:
-                raise VkmsHelperError("Monitorize VKMS connected, but its DRM connector did not appear; it remains connected for safe recovery.")
-            if type(drm_connector.get("connector_id")) is not int or drm_connector["connector_id"] <= 0:
-                raise VkmsHelperError("Monitorize DRM connector has no reliable object identity; it remains connected for safe recovery.")
-            lease.update({"connector": drm_connector["name"], "card": drm_connector["card"],
-                          "connector_id": drm_connector.get("connector_id")})
-            _write_lease(lease, args.slot)
-            if args.mode:
-                width, height, refresh = args.mode
-                mode_deadline = time.monotonic() + 5.0
-                while (f"{width}x{height}" not in drm_connector.get("modes", [])
-                       and time.monotonic() < mode_deadline):
-                    time.sleep(0.1)
-                    refreshed = monitorize_drm_connectors().get(drm_connector["name"])
-                    if refreshed and refreshed.get("connector_id") == drm_connector.get("connector_id"):
-                        drm_connector = refreshed
-                if f"{width}x{height}" not in drm_connector.get("modes", []):
-                    raise VkmsHelperError("Requested mode was not published by the Monitorize DRM connector; it remains connected for safe recovery.")
-                worker_result = _run_worker(uid, env, {
-                    "action": "activate", "name": drm_connector["name"],
-                    "connector_id": drm_connector.get("connector_id"), "card": drm_connector["card"], "mode": args.mode,
-                    "snapshot": snapshot.get("state"),
-                })
-                lease["state"] = "active"
-                lease["desktop"] = worker_result.get("desktop")
-                _write_lease(lease, args.slot)
-                response["compositor"] = worker_result.get("desktop")
-                response["compositor_details"] = worker_result.get("details", {})
-            else:
-                lease["state"] = "active"
-                _write_lease(lease, args.slot)
-            response.update({"changed": changed, "created": True, "generation": generation,
-                             "connector": drm_connector["name"], "card": drm_connector["card"]})
+            response = _create_request(args, root, logs, uid, session_id, env)
+            changed = response.get('changed', False)
         finally:
             os.close(lock_fd)
     elif args.operation in ("destroy", "destroy-all"):
@@ -901,6 +924,7 @@ def main() -> int:
     elif args.operation == "capability":
         capability = "supported" if _probe_custom_edid_support(root, logs) else "unsupported"
         response["capability"] = capability
+        response["named_displays_protocol"] = 1
         response["api_version"] = 1
         response["displays"] = list(INSTANCE_NAMES)
         response["topology_ready"] = True

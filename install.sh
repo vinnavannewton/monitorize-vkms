@@ -2,6 +2,14 @@
 # Safely install monitorize-vkms through DKMS for the currently running kernel.
 
 set -euo pipefail
+MANAGED_UPDATE=0
+if [[ "${1:-}" == --managed-update && $# == 1 ]]; then
+    MANAGED_UPDATE=1
+elif (( $# )); then
+    printf 'Unknown installer arguments\n' >&2
+    exit 2
+fi
+MODULE_REPLACED=0
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 umask 022
@@ -463,7 +471,7 @@ backup_install_targets() {
 	local target version module_file module_directory target_kernel
 	for target in "$MODPROBE_CONFIG" "$CONFIG_BACKUP" "$BOOTSTRAP_PATH" "$BOOTSTRAP_UNIT_PATH" \
 		"$HELPER_PATH" "$AUTHORIZATION_PATH" "$DBUS_PATH" "$DBUS_UNIT_PATH" "$DBUS_ACTIVATION_PATH" "$DBUS_POLICY_PATH" "$DBUS_INTERFACE_PATH" \
-		"$POLKIT_POLICY_PATH" "$CLI_PATH" "$PYTHON_LIB_DIR" "$CAPABILITIES_PATH" "$SOURCE_DIR" \
+		"$POLKIT_POLICY_PATH" "$CLI_PATH" "$PYTHON_LIB_DIR" "$CAPABILITIES_PATH" "$SOURCE_DIR" "${STATE_DIR}/reboot-required.json" \
 		"/var/lib/dkms/${PACKAGE_NAME}"; do
 		backup_one_target "$target"
 	done
@@ -545,6 +553,9 @@ main() {
 	detect_distro
 	check_prerequisites
 	acquire_global_lock
+	if ((MANAGED_UPDATE)); then
+		/usr/bin/python3 -I -B "${REPOSITORY_DIR}/monitorize_vkms/managed_install.py" check-idle
+	fi
 	check_secure_boot
 	trap 'rollback_failed_install $?' EXIT
 	prebuild_source
@@ -557,6 +568,7 @@ main() {
 		log "${PACKAGE_NAME}/${MODULE_PACKAGE_VERSION} is already installed and matches source for ${KERNEL}; verifying it"
 	else
 		install_dkms
+		MODULE_REPLACED=1
 	fi
 	# Retire legacy same-name releases before checking that distro vkms resolves
 	# back to its packaged path. A failure still rolls the new package back.
@@ -564,6 +576,9 @@ main() {
 	write_modprobe_configuration
 	install_bootstrap_service
 	install_cli_and_tools
+	if ((MODULE_REPLACED)); then
+		/usr/bin/python3 -I -B "${REPOSITORY_DIR}/monitorize_vkms/verification.py" --record-reboot
+	fi
 	INSTALL_COMMITTED=1
 
 	printf '\n==========================================\n'
@@ -575,7 +590,7 @@ main() {
 	printf '  monitorize-vkms doctor\n'
 	printf '  monitorize-vkms update\n'
 	printf '  monitorize-vkms reinstall\n'
-	printf '  monitorize-vkms create 2340x1080@60\n'
+	printf '  monitorize-vkms create tablet 2340x1080@60\n'
 	printf '  monitorize-vkms list\n'
 	printf '  monitorize-vkms status\n'
 	printf '  monitorize-vkms remove\n'

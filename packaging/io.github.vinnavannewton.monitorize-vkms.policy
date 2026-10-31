@@ -84,4 +84,32 @@
     <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin</allow_active></defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-authorization</annotate>
   </action>
+  <action id="io.github.vinnavannewton.monitorize-vkms.create-named">
+    <description>Create a named virtual display</description>
+    <message>Authorization is required to manage Monitorize virtual displays.</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">create-named</annotate>
+  </action>
+  <action id="io.github.vinnavannewton.monitorize-vkms.destroy-named">
+    <description>Remove your named virtual display</description>
+    <message>Authorization is required to manage Monitorize virtual displays.</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">destroy-named</annotate>
+  </action>
+  <action id="io.github.vinnavannewton.monitorize-vkms.destroy-all-named">
+    <description>Remove your named virtual displays</description>
+    <message>Authorization is required to manage Monitorize virtual displays.</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">destroy-all-named</annotate>
+  </action>
+  <action id="io.github.vinnavannewton.monitorize-vkms.list-named">
+    <description>List your virtual displays</description>
+    <message>Authorization is required to manage Monitorize virtual displays.</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/monitorize-vkms/monitorize-vkms-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">list-named</annotate>
+  </action>
 </policyconfig>

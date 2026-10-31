@@ -18,9 +18,10 @@ OFFICIAL_REMOTES = {
 }
 
 
-def update(source: str | None = None, *, reinstall: bool = False) -> int:
+def update(source: str | None = None, *, reinstall: bool = False, uninstall: bool = False) -> int:
     """Keep Git unprivileged and elevate only the installer."""
-    command = "reinstall" if reinstall else "update"
+    command = "uninstall" if uninstall else "reinstall" if reinstall else "update"
+    script = "uninstall.sh" if uninstall else "install.sh"
     try:
         if os.geteuid() == 0:
             raise ValueError(f"Run monitorize-vkms {command} as your normal user, without sudo. "
@@ -53,13 +54,14 @@ def update(source: str | None = None, *, reinstall: bool = False) -> int:
         if inspect("status", "--porcelain", "--untracked-files=normal"):
             raise ValueError("The source checkout has local changes or untracked files. "
                              "Save them before updating; nothing has been discarded.")
-        if not (checkout / "install.sh").is_file():
-            raise ValueError("The source checkout is missing install.sh.")
+        if not (checkout / script).is_file():
+            raise ValueError(f"The source checkout is missing {script}.")
 
-        print("If updating your system/kernel too, update and reboot first, then run monitorize-vkms reinstall.\n"
+        if not uninstall:
+            print("If updating your system/kernel too, update and reboot first, then run monitorize-vkms reinstall.\n"
               "Matching headers are required for the running kernel; the installer checks them.\n"
               "System updates and reboots remain manual.", flush=True)
-        if not reinstall:
+        if not reinstall and not uninstall:
             print(f"Updating source in {checkout}...", flush=True)
             # Fetch separately so local commits can be rejected even when a pull
             # would consider a locally-ahead branch already up to date.
@@ -68,18 +70,19 @@ def update(source: str | None = None, *, reinstall: bool = False) -> int:
             if inspect("rev-list", "--count", "FETCH_HEAD..HEAD") != "0":
                 raise ValueError("The checkout contains local commits. Resolve them before updating.")
             if inspect("rev-parse", "HEAD") == inspect("rev-parse", "FETCH_HEAD"):
-                print("Already up to date. Installation skipped. "
-                      "To reinstall, run: monitorize-vkms reinstall")
-                return 0
+                print("Source is already up to date; verifying/reinstalling installed files.", flush=True)
             # Equivalent to git pull --ff-only, integrating the checked commit.
             subprocess.run([git, "-C", str(checkout), "merge", "--ff-only", "FETCH_HEAD"],
                            check=True, timeout=30)
-        print("Running the installer with sudo...", flush=True)
-        result = subprocess.run([sudo, "--", str(checkout / "install.sh")], cwd=checkout)
+        print(f"Running {script} with sudo...", flush=True)
+        result = subprocess.run([sudo, "--", str(checkout / script)], cwd=checkout)
         if result.returncode:
-            print("Installation failed. Resolve the reported error and run "
-                  "monitorize-vkms reinstall to retry installation.", file=sys.stderr)
+            print("Uninstall failed. Resolve the reported error before retrying." if uninstall else
+                  f"{command.capitalize()} failed. Resolve the reported error and run monitorize-vkms reinstall to retry installation.", file=sys.stderr)
             return result.returncode if result.returncode > 0 else 1
+        if uninstall:
+            print('Monitorize VKMS uninstalled. Reboot to finish removal of the running module.')
+            return 0
         print(f"Monitorize VKMS {'reinstalled' if reinstall else 'updated'}. "
               "Reboot to activate the installed module.")
         return 0

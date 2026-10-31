@@ -9,6 +9,7 @@ from typing import Callable, Any
 
 from monitorize_vkms.errors import MonitorizeVkmsError
 from monitorize_vkms.edid import display_from_edid
+from monitorize_vkms.names import device_slot, edid_identity
 
 DRM_DISCOVERY_TIMEOUT = 5.0
 POLL_INTERVAL = 0.1
@@ -28,7 +29,7 @@ def find_monitorize_card(drm_root: Path | None = None) -> Path | None:
             if device_link.is_symlink() or device_link.exists():
                 try:
                     resolved = device_link.resolve()
-                    if "/faux/monitorize" in str(resolved):
+                    if device_slot(resolved) == "managed":
                         return entry
                 except OSError:
                     pass
@@ -49,8 +50,9 @@ def monitorize_drm_connectors(drm_root: Path | None = None) -> dict[str, dict]:
             if device_link.is_symlink() or device_link.exists():
                 try:
                     resolved = device_link.resolve()
-                    if "/faux/monitorize" in str(resolved):
-                        # Found a connector owned by monitorize
+                    instance_slot = device_slot(resolved)
+                    if instance_slot is not None:
+                        # Device namespace and EDID together bind a named identity.
                         connector_name = entry.name.split("-", 1)[1]
                         card_name = entry.name.split("-", 1)[0]
                         
@@ -78,6 +80,8 @@ def monitorize_drm_connectors(drm_root: Path | None = None) -> dict[str, dict]:
                             with (entry / "edid").open("rb") as stream:
                                 edid = stream.read(128)
                             display = display_from_edid(edid)
+                            if instance_slot != 'managed':
+                                display = instance_slot if display == edid_identity(instance_slot) else None
                             edid_sha256 = hashlib.sha256(edid).hexdigest() if display else None
                         except OSError:
                             display = None
@@ -89,6 +93,7 @@ def monitorize_drm_connectors(drm_root: Path | None = None) -> dict[str, dict]:
                             )
                         connectors[connector_name] = {
                             "name": connector_name,
+                            "instance_slot": instance_slot,
                             "path": str(entry),
                             "card": card_name,
                             "status": status,

@@ -52,13 +52,12 @@ class TestCli(unittest.TestCase):
     def test_cli_list_json(self):
         f = io.StringIO()
         with contextlib.redirect_stdout(f):
-            ret = main(["list", "--json"])
+            with patch("monitorize_vkms.cli.helper_response", return_value={"success": True, "displays": []}):
+                ret = main(["list", "--json"])
         self.assertEqual(ret, 0)
         data = json.loads(f.getvalue())
         self.assertTrue(data["success"])
-        self.assertIn("card", data)
-        self.assertIn("connectors", data)
-        self.assertIsInstance(data["connectors"], list)
+        self.assertIsInstance(data["displays"], list)
 
     def test_cli_doctor_json(self):
         f = io.StringIO()
@@ -73,7 +72,7 @@ class TestCli(unittest.TestCase):
     def test_cli_create_invalid_mode_json(self):
         f = io.StringIO()
         with contextlib.redirect_stdout(f):
-            ret = main(["create", "not-a-mode", "--json"])
+            ret = main(["create", "tab1", "not-a-mode", "--json"])
         self.assertEqual(ret, 1)
         data = json.loads(f.getvalue())
         self.assertFalse(data["success"])
@@ -133,7 +132,7 @@ class TestCli(unittest.TestCase):
         run.assert_not_called()
 
     def test_foreground_exit_destroys_display_once(self):
-        args = SimpleNamespace(mode="1920x1080@60", json=True, foreground=True)
+        args = SimpleNamespace(name="tab 1", mode="1920x1080@60", json=True, foreground=True)
         helper_result = {"success": True, "created": True, "generation": "gen-1"}
 
         with (
@@ -148,9 +147,9 @@ class TestCli(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(
             [call.args[0] for call in helper.call_args_list],
-            ["create", "destroy"],
+            ["create-named", "destroy-named"],
         )
-        self.assertEqual(helper.call_args_list[-1].kwargs, {"generation": "gen-1", "slot": "mon1"})
+        self.assertEqual(helper.call_args_list[-1].kwargs, {"generation": "gen-1", "name": "tab 1"})
 
 
 if __name__ == "__main__":
@@ -163,12 +162,12 @@ class ReservedRemoveTests(unittest.TestCase):
         with patch('monitorize_vkms.cli.helper_response',return_value=response), \
              patch('monitorize_vkms.remote_login_client.remove_reserved',return_value={'success':True,'changed':True}) as remove, \
              contextlib.redirect_stdout(io.StringIO()) as output:
-            result=cmd_remove(SimpleNamespace(display=None,json=False))
+            result=cmd_remove(SimpleNamespace(display=None,json=False,managed=True))
         self.assertEqual(result,0);remove.assert_called_once()
         self.assertIn('removed',output.getvalue().lower())
     def test_failed_removal_is_not_reported_as_no_active_display(self):
         from monitorize_vkms.cli import cmd_remove
         response={'success':False,'changed':False,'results':{'mon1':{'error':'busy'}}}
         with patch('monitorize_vkms.cli.helper_response',return_value=response),contextlib.redirect_stdout(io.StringIO()) as output,contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(cmd_remove(SimpleNamespace(display=None,json=False)),1)
+            self.assertEqual(cmd_remove(SimpleNamespace(display=None,json=False,managed=True)),1)
         self.assertNotIn('No active',output.getvalue())

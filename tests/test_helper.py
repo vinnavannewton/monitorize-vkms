@@ -44,7 +44,7 @@ class TestInstalledHelperStartup(unittest.TestCase):
             package_dir.mkdir(parents=True)
             helper = helper_dir / "monitorize-vkms-helper"
             shutil.copy2(source / "helper.py", helper)
-            for filename in ("__init__.py", "configfs.py"):
+            for filename in ("__init__.py", "configfs.py", "names.py"):
                 shutil.copy2(source / filename, package_dir / filename)
 
             result = subprocess.run(

@@ -43,8 +43,10 @@ installed privileged helper or restart its service.
 After installing and rebooting once, you can manage virtual displays directly from your terminal:
 
 ```sh
-# Create upto two virtual displays with custom resolution and refresh rate
-monitorize-vkms create 2340x1080@60
+# Create named displays (quote names containing spaces)
+monitorize-vkms create tablet 2340x1080@60
+monitorize-vkms create "Monitor 1" 1920x1080@60
+monitorize-vkms create "Virtual display 3" 2560x1440@60
 
 # Check active virtual displays
 monitorize-vkms list
@@ -52,16 +54,37 @@ monitorize-vkms list
 # Inspect driver, configfs, and DRM status
 monitorize-vkms status
 
+# Verify installation without changing displays or services
+monitorize-vkms verify
+
 # Diagnose configuration and environment health
 monitorize-vkms doctor
 
-# Remove one display, or omit its ID to remove both owned displays
-monitorize-vkms remove mon1
-monitorize-vkms remove mon2
+# Remove one named display, or omit its name to remove your named displays
+monitorize-vkms remove tablet
+monitorize-vkms remove "Monitor 1"
 monitorize-vkms remove
+
+# Update source and reinstall, reinstall without pulling, or uninstall
+monitorize-vkms update
+monitorize-vkms reinstall
+monitorize-vkms uninstall
 ```
 
-`create` fills `mon1`, then `mon2`; a third create fails.
+Each name must be unique for your user. There is no fixed CLI display-count cap;
+actual limits depend on kernel resources and compositor support for additional
+DRM devices. The app's existing two managed outputs remain separate.
+`list` includes your named outputs and app-managed outputs, with ownership/state.
+Bare `remove` processes your named displays sequentially and reports individual
+failures. It does not remove another user's displays or the app/remote-login
+outputs. Removal requires the session that created the display.
+
+Names support printable text up to 128 UTF-8 bytes. Use double quotes for spaces;
+single-word names work without quotes. The full name is kept for CLI lookup;
+the desktop EDID label is limited to 13 ASCII characters by the EDID format.
+Named outputs use independently registered DRM devices. Removed devices remain
+disconnected and are reused for later names until reboot, avoiding live card
+teardown while the compositor may still hold references.
 
 ---
 
@@ -190,6 +213,12 @@ Run as your normal user:
 monitorize-vkms update
 ```
 
+Update also reruns installation when the source checkout is already current, so
+previously pulled changes reach the installed files. Monitorize Settings can run
+this source-update workflow with graphical authorization and show installation
+health. A service restart does not replace an already-loaded kernel module; follow
+the reported system-restart requirement after a driver update.
+
 For an older installation without a saved checkout location, or if you moved it:
 
 ```sh
@@ -236,6 +265,8 @@ Or run the low-level verification script:
 ## Uninstallation
 
 ```sh
+monitorize-vkms uninstall
+# Or, from the source checkout:
 sudo ./uninstall.sh
 sudo reboot
 ```
@@ -250,3 +281,7 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 - **Fail-Closed Secure Boot**: When Secure Boot is enabled, installation requires a signed module and a verified enrolled DKMS MOK certificate.
 - **Stock VKMS Coexistence**: Uses a separate `monitorize-vkms` configfs namespace and exports no kernel symbols, allowing coexistence with built-in or loaded distro VKMS.
 - **Failure Rollback**: Installation failures trigger rollback of installer-managed changes and restoration of saved state. If rollback is incomplete, the installer reports it and preserves recovery snapshots.
+
+`monitorize-vkms uninstall` uses the recorded source checkout (or `--source PATH`)
+and asks for sudo to run its uninstaller. It does not fetch or build. Remove named
+displays and disable remote login first. Reboot afterward to finish module removal.

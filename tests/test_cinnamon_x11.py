@@ -204,7 +204,7 @@ class CinnamonX11Test(unittest.TestCase):
             compositor._display_config_interface(bus=bus, dbus=dbus)
 
     def test_snapshot_failure_is_reported_without_creating_connector(self):
-        args = SimpleNamespace(mode="2340x1080@60", json=False, foreground=False)
+        args = SimpleNamespace(name="tab1", mode="2340x1080@60", json=False, foreground=False)
         with (
             patch.object(cli, "helper_response", side_effect=HelperError("xrandr unavailable")) as helper,
             contextlib.redirect_stdout(io.StringIO()),

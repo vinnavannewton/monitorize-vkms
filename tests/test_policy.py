@@ -21,6 +21,10 @@ class TestPolkitPolicy(unittest.TestCase):
         actions = {action.attrib["id"]: action for action in root.findall("action")}
         expected = {
             "create": "auth_admin_keep",
+            "create-named": "auth_admin_keep",
+            "destroy-named": "yes",
+            "destroy-all-named": "yes",
+            "list-named": "yes",
             "create-custom": "auth_admin_keep",
             "destroy": "yes",
             "destroy-all": "yes",

@@ -9,7 +9,7 @@ if __name__ == '__main__':
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from monitorize_vkms.boot_runtime import read_enrollment
-from monitorize_vkms.lease import read_lease
+from monitorize_vkms.lease import read_lease, named_slots
 
 
 def assert_removal_safe() -> None:
@@ -19,6 +19,15 @@ def assert_removal_safe() -> None:
     value = read_lease(Path('/run/monitorize-vkms'), 'mon1')
     if (settings and settings['enabled']) or (value and value.get('protected') is True):
         raise RuntimeError('Disable remote login and release its reserved display in Monitorize Settings before removing or downgrading the host package.')
+
+    for slot in named_slots(Path('/run/monitorize-vkms')):
+        if read_lease(Path('/run/monitorize-vkms'), slot) is not None:
+            raise RuntimeError('Remove all named VKMS displays from their creating sessions before uninstalling.')
+    for connector in Path('/sys/class/drm').glob('card*-*'):
+        from monitorize_vkms.names import device_slot
+        if device_slot((connector / 'device').resolve()) not in (None, 'managed'):
+            if (connector / 'status').read_text().strip() == 'connected':
+                raise RuntimeError('A named VKMS output remains connected; release it before uninstalling.')
 
 
 def release_version(value):

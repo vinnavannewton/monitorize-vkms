@@ -25,6 +25,17 @@ class HostRecoveryTests(unittest.TestCase):
     def test_restart_failure_retains_retry_gate(self):
         b=self.backend();b.restart_service.side_effect=RuntimeError('service failed')
         result=Recovery(b).run(1000);self.assertTrue(result['partial']);b.unblock.assert_not_called()
+    def test_service_restart_does_not_bootstrap_or_unload_driver(self):
+        b=self.backend()
+        result=Recovery(b).run(1000,restart_only=True)
+        self.assertTrue(result['success'])
+        b.bootstrap.assert_not_called();b.restart_service.assert_called_once()
+    def test_service_restart_with_missing_topology_requires_reboot(self):
+        b=self.backend()
+        b.inspect.side_effect=[dict(busy=False,installed_compatible=True,topology_ready=False,module_available=True)]*2
+        result=Recovery(b).run(1000,restart_only=True)
+        self.assertTrue(result['reboot_required'])
+        b.bootstrap.assert_not_called();b.unblock.assert_not_called()
     def test_failed_topology_verification_retains_gate_and_requests_reboot(self):
         b=self.backend();b.inspect.side_effect=[dict(busy=False,installed_compatible=True,topology_ready=False,module_available=True)]*2
         self.assertTrue(Recovery(b).run(1000)['reboot_required']);b.unblock.assert_not_called()

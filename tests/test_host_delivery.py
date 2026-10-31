@@ -28,6 +28,8 @@ class HostDeliveryTests(unittest.TestCase):
             package=stage/'usr/lib/monitorize-vkms/monitorize_vkms/helper.py'
             self.assertEqual(helper.read_bytes(),package.read_bytes())
             self.assertTrue((stage/'usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py').is_file())
+            for name in ('verification.py','managed_install.py'):
+                self.assertEqual((stage/'usr/lib/monitorize-vkms/monitorize_vkms'/name).read_bytes(),(ROOT/'monitorize_vkms'/name).read_bytes())
             manifest=json.loads((stage/'usr/share/monitorize-vkms/capabilities.json').read_text())
             self.assertEqual(manifest['version'],(ROOT/'VERSION').read_text().strip())
             self.assertEqual(manifest['remote_login_protocols']['idle_display'],1)

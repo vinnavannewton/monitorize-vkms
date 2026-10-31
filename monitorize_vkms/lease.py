@@ -6,14 +6,17 @@ import os
 from pathlib import Path
 import secrets
 import stat
+from monitorize_vkms.names import named_slot
 
 OWNER_UID = 0
 MAX_LEASE_BYTES = 65536
 
 
 def _path(state: Path, slot: str) -> Path:
+    if named_slot(slot):
+        return Path(state) / (slot + '.json')
     if slot not in ('mon1', 'mon2'):
-        raise ValueError('Display must be mon1 or mon2.')
+        raise ValueError('Invalid Monitorize display identity.')
     return Path(state) / ('primary.json' if slot == 'mon1' else 'mon2.json')
 
 
@@ -90,3 +93,16 @@ def remove_lease(state: Path, slot: str) -> None:
     if read_lease(state, slot) is not None:
         path.unlink()
         _sync(Path(state))
+
+
+def named_slots(state: Path, uid=None):
+    """Enumerate validated private record names; callers hold the lifecycle lock."""
+    from monitorize_vkms.names import slot_uid
+    try:_directory(Path(state))
+    except FileNotFoundError:return []
+    result=[]
+    for path in Path(state).glob('named-*.json'):
+        slot=path.stem
+        if named_slot(slot) and (uid is None or slot_uid(slot)==uid):
+            result.append(slot)
+    return sorted(result)

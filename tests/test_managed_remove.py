@@ -14,7 +14,7 @@ class ManagedRemoveTests(unittest.TestCase):
         with patch.object(cli,'helper_response',side_effect=ManagedDisplayError('managed')), \
              patch('monitorize_vkms.remote_login_client.remove_reserved',return_value=dict(success=True,changed=True)), \
              redirect_stdout(output):
-            self.assertEqual(cli.cmd_remove(SimpleNamespace(display='mon1',json=True)),0)
+            self.assertEqual(cli.cmd_remove(SimpleNamespace(display='mon1',json=True,managed=True)),0)
         self.assertTrue(json.loads(output.getvalue())['removed'])
 
     def test_destroy_all_keeps_partial_failure_when_coordinator_unavailable(self):
@@ -24,7 +24,7 @@ class ManagedRemoveTests(unittest.TestCase):
         with patch.object(cli,'helper_response',return_value=response), \
              patch('monitorize_vkms.remote_login_client.remove_reserved',side_effect=HelperError('Use Settings recovery')), \
              redirect_stdout(output):
-            self.assertEqual(cli.cmd_remove(SimpleNamespace(display=None,json=True)),1)
+            self.assertEqual(cli.cmd_remove(SimpleNamespace(display=None,json=True,managed=True)),1)
         result=json.loads(output.getvalue())
         self.assertFalse(result['success'])
         self.assertTrue(result['removed'])

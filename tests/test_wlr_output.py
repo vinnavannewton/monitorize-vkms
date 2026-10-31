@@ -74,7 +74,7 @@ class OutputManagementTests(unittest.TestCase):
         with patch.object(cli, "helper_response", return_value={"changed": True}) as helper, \
              contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.main(["remove", "--json"]), 0)
-        helper.assert_called_once_with("destroy-all", slot=None)
+        helper.assert_called_once_with("destroy-all-named")
 
     def test_cli_reports_helper_failure_without_claiming_removal(self):
         with patch.object(cli, "helper_response", side_effect=HelperError("unsafe")), \

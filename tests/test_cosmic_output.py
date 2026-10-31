@@ -110,7 +110,7 @@ class CosmicOutputTests(unittest.TestCase):
         with patch.object(cli, "helper_response", side_effect=HelperError("renderer teardown is unverified")) as helper, \
              contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(["remove", "--json"]), 1)
-        helper.assert_called_once_with("destroy-all", slot=None)
+        helper.assert_called_once_with("destroy-all-named")
         self.assertIn("unverified", json.loads(output.getvalue())["message"])
 
     def test_duplicate_or_missing_head_fails_closed(self):

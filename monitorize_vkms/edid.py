@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import math
 
 from monitorize_vkms.errors import EdidError
+from monitorize_vkms.names import named_slot, edid_identity, validate_name
 
 __all__ = [
     "EDID_HEADER",
@@ -46,6 +47,12 @@ def display_from_edid(edid: bytes) -> str | None:
     """Identify only the two EDIDs generated for Monitorize display slots."""
     if (len(edid) != 128 or edid[:8] != EDID_HEADER or sum(edid) % 256
             or edid[8:10] != b"\x35\xee" or edid[72:77] != b"\x00\x00\x00\xfc\x00"):
+        return None
+    if (int.from_bytes(edid[10:12], 'little') == 0x7504
+            and edid[108:113] == b"\x00\x00\x00\xff\x00"):
+        identity = edid[113:126].decode('ascii', errors='replace').rstrip(' \n')
+        if len(identity) == 13 and identity[0] == 'n' and all(c in '0123456789abcdef' for c in identity[1:]):
+            if int.from_bytes(edid[12:16], 'little') == int(identity[1:9], 16):return identity
         return None
     for display, product, serial in (("mon1", 0x7502, 1), ("mon2", 0x7503, 2)):
         if (int.from_bytes(edid[10:12], "little") == product
@@ -156,10 +163,12 @@ def _validate_timing(timing: Timing) -> None:
         raise EdidError("Custom VKMS vertical sync does not fit an EDID detailed timing.")
 
 
-def generate_edid(width: int, height: int, refresh_hz: float, display: str = "mon1") -> bytes:
+def generate_edid(width: int, height: int, refresh_hz: float, display: str = "mon1", *, label: str | None = None) -> bytes:
     """Generate and validate one preferred detailed timing EDID base block."""
-    if display not in ("mon1", "mon2"):
-        raise EdidError("Display must be mon1 or mon2.")
+    named = named_slot(display)
+    if display not in ("mon1", "mon2") and not named:
+        raise EdidError("Invalid Monitorize display identity.")
+    if label is not None:validate_name(label)
     timing = generate_cvt_timing(width, height, refresh_hz)
     h_blank = timing.h_total - timing.width
     v_blank = timing.v_total - timing.height
@@ -192,18 +201,21 @@ def generate_edid(width: int, height: int, refresh_hz: float, display: str = "mo
     edid[8:10] = (0x35EE).to_bytes(2, "big")
     edid[10:12] = (0x7502 if display == "mon1" else 0x7503).to_bytes(2, "little")
     edid[12:16] = (1 if display == "mon1" else 2).to_bytes(4, "little")
+    if named:
+        edid[10:12] = (0x7504).to_bytes(2, 'little')
+        edid[12:16] = int(edid_identity(display)[1:9], 16).to_bytes(4, 'little')
     edid[16:18] = bytes((1, 36))
     edid[18:25] = bytes((1, 4, 0x80, min(255, width_mm // 10), min(255, height_mm // 10), 120, 0x0A))
     for offset in range(38, 54, 2):
         edid[offset:offset + 2] = b"\x01\x01"
     edid[54:72] = dtd
     # The product label is stable even if a desktop renames its DRM connector.
-    edid[72:90] = _descriptor(0xFC, display.encode("ascii") + b"\n")
+    edid[72:90] = _descriptor(0xFC, (label or display).encode("ascii", errors='replace') + b"\n")
     edid[90:108] = _descriptor(0xFD, bytes((24, 240, 30, 255, max_pixel_clock_units, 0, 0, 0)))
     # KWin prefers an ASCII EISA descriptor over the required binary PNP ID.
     # An intentionally blank optional descriptor prevents KDE from prepending
     # the synthetic "MON" manufacturer code to the display model name.
-    edid[108:126] = _descriptor(0xFE, b"")
+    edid[108:126] = _descriptor(0xFF, edid_identity(display).encode('ascii')) if named else _descriptor(0xFE, b"")
     edid[126] = 0
     edid[127] = (-sum(edid[:127])) & 0xFF
     validate_edid(edid)

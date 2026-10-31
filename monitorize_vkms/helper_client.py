@@ -10,10 +10,11 @@ import subprocess
 from pathlib import Path
 
 from monitorize_vkms.errors import HelperError, PolkitDenied, ManagedDisplayError
+from monitorize_vkms.names import validate_name
 
 
 HELPER_PATH = Path("/usr/libexec/monitorize-vkms/monitorize-vkms-helper")
-VALID_OPERATIONS = ("create", "create-custom", "destroy", "destroy-all", "status", "capability")
+VALID_OPERATIONS = ("create", "create-custom", "destroy", "destroy-all", "status", "capability", "create-named", "destroy-named", "destroy-all-named", "list-named")
 
 
 def helper_response(
@@ -23,6 +24,7 @@ def helper_response(
     mode: tuple[int, int, float] | None = None,
     generation: str | None = None,
     slot: str | None = None,
+    name: str | None = None,
 ) -> dict:
     """Call the privileged helper via pkexec and return its JSON response."""
     if operation not in VALID_OPERATIONS:
@@ -43,6 +45,7 @@ def helper_response(
         )
 
     command = [pkexec, str(HELPER_PATH), operation]
+    if name is not None:command.append("--name=" + validate_name(name))
     if slot is not None:
         command.extend(("--slot", slot))
     if edid is not None:
@@ -76,7 +79,7 @@ def helper_response(
         except (TypeError, json.JSONDecodeError):
             continue
 
-    if operation == "destroy-all" and isinstance(response, dict) and isinstance(response.get("results"), dict):
+    if operation in ("destroy-all", "destroy-named", "destroy-all-named") and isinstance(response, dict) and isinstance(response.get("results"), dict):
         return response
     if result.returncode or not isinstance(response, dict) or not response.get("success"):
         if isinstance(response, dict) and response.get("error_kind") == "protected_display":

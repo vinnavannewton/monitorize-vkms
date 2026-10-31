@@ -29,6 +29,7 @@ from monitorize_vkms.errors import (
 )
 from monitorize_vkms.helper_client import HELPER_PATH, helper_response
 from monitorize_vkms.mode import parse_mode
+from monitorize_vkms.names import validate_name
 
 
 def _json_out(data: dict[str, Any], exit_code: int = 0) -> int:
@@ -43,6 +44,7 @@ def _json_error(message: str, error_type: str = "error", exit_code: int = 1) -> 
 
 def cmd_create(args: argparse.Namespace) -> int:
     try:
+        validate_name(args.name)
         width, height, refresh = parse_mode(args.mode)
     except ValueError as exc:
         if args.json:
@@ -62,7 +64,7 @@ def cmd_create(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        helper_res = helper_response("create", mode=(width, height, refresh), slot="auto")
+        helper_res = helper_response("create-named", mode=(width, height, refresh), name=validate_name(args.name))
     except PolkitDenied as exc:
         if args.json:
             return _json_error(str(exc), "polkit_denied")
@@ -91,7 +93,10 @@ def cmd_create(args: argparse.Namespace) -> int:
         "compositor_details": comp_details,
         "status": "active",
         "created": helper_res.get("created", True),
-        "display": helper_res.get("slot", "mon1"),
+        "display": args.name,
+        "name": args.name,
+        "slot": helper_res.get("slot"),
+        "generation": helper_res.get("generation"),
     }
 
     if args.json and (not args.foreground or not helper_res.get("created", True)):
@@ -124,7 +129,9 @@ def cmd_create(args: argparse.Namespace) -> int:
             if not args.json:
                 print("\nCleaning up virtual display...")
             try:
-                helper_response("destroy", generation=helper_res.get("generation"), slot=result["display"])
+                response = helper_response("destroy-named", generation=helper_res.get("generation"), name=args.name)
+                if not response.get("success", True):
+                    raise HelperError(str(response.get("results", {})))
             except Exception as exc:
                 print(f"VKMS disconnect failed: {exc}", file=sys.stderr)
                 return False
@@ -153,7 +160,7 @@ def cmd_create(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_remove(args: argparse.Namespace) -> int:
+def cmd_remove_managed(args: argparse.Namespace) -> int:
     try:
         try:
             helper_res = helper_response("destroy" if args.display else "destroy-all", slot=args.display)
@@ -217,32 +224,45 @@ def cmd_remove(args: argparse.Namespace) -> int:
     return 0 if data["success"] else 1
 
 
+def cmd_remove(args: argparse.Namespace) -> int:
+    if getattr(args, 'managed', False):
+        return cmd_remove_managed(args)
+    try:
+        kwargs = {'name': validate_name(args.display)} if args.display is not None else {}
+        response = helper_response('destroy-named' if args.display is not None else 'destroy-all-named', **kwargs)
+    except (HelperError, PolkitDenied, ValueError) as error:
+        if args.json:return _json_error(str(error), 'removal_failed')
+        print(f'Error: {error}', file=sys.stderr)
+        return 1
+    changed = response.get('changed', False)
+    success = response.get('success', True)
+    value = dict(success=success, removed=changed, results=response.get('results', {}),
+                 message='Virtual displays removed.' if success and changed else
+                         'No named virtual displays were found.' if success else 'Some displays could not be removed.')
+    if args.json:return _json_out(value, 0 if success else 1)
+    print(value['message'])
+    for name, result in value['results'].items():
+        print(f"  {name}: " + (str(result['error']) if 'error' in result else 'removed' if result.get('changed') else 'unchanged'))
+    return 0 if success else 1
+
+
 def cmd_list(args: argparse.Namespace) -> int:
-    connectors = monitorize_drm_connectors()
-    card = find_monitorize_card()
-    card_name = card.name if card else "None"
-    labelled = list(connectors.values())
-
+    try:
+        response = helper_response('list-named')
+    except (HelperError, PolkitDenied) as error:
+        if args.json:return _json_error(str(error), 'list_failed')
+        print(f'Error: {error}', file=sys.stderr)
+        return 1
+    displays = response.get('displays', [])
     if args.json:
-        return _json_out({
-            "success": True,
-            "card": card_name,
-            "connectors": labelled,
-        })
-
-    if not connectors:
-        print(f"No active Monitorize VKMS displays found (Card: {card_name}).")
-        return 0
-
-    print(f"Monitorize VKMS Displays (Card: {card_name}):")
-    for info in labelled:
-        print(f"  • {info['display'] or 'unknown'} ({info['card']}-{info['name']}) [{info['status']}]")
-        modes_str = ", ".join(info["modes"][:5])
-        if len(info["modes"]) > 5:
-            modes_str += f" (+{len(info['modes']) - 5} more)"
-        print(f"    Modes: {modes_str or 'none'}")
-        print(f"    Path : {info['path']}")
-
+        return _json_out(dict(success=True, displays=displays))
+    if not displays:
+        print('No Monitorize VKMS displays found for your user.')
+    for display in displays:
+        mode = display.get('mode')
+        mode_text = f'{mode[0]}x{mode[1]}@{mode[2]:g}' if mode else 'unknown mode'
+        managed = ' [managed; protected from ordinary remove]' if display.get('managed') else ''
+        print(f"{display['name']} — {mode_text} — {display.get('state', 'unknown')}{managed}")
     return 0
 
 
@@ -522,10 +542,14 @@ def main(args: list[str] | None = None) -> int:
     )
     p_reinstall.add_argument("--source", metavar="PATH", help="Original Git checkout (overrides saved location)")
 
+    p_uninstall = subparsers.add_parser('uninstall', help='Run the source uninstaller without pulling')
+    p_uninstall.add_argument('--source', metavar='PATH', help='Original source checkout if its location changed')
+
     # create
     p_create = subparsers.add_parser(
         "create", help="Create a virtual display with specified resolution and refresh rate"
     )
+    p_create.add_argument("name", type=validate_name, help='Display name; quote names containing spaces')
     p_create.add_argument(
         "mode",
         help="Resolution and refresh rate (e.g. 1920x1080, 2340x1080@60, 2560x1440@120)",
@@ -544,10 +568,10 @@ def main(args: list[str] | None = None) -> int:
 
     # remove
     p_remove = subparsers.add_parser(
-        "remove", help="Remove mon1, mon2, or both owned virtual displays"
+        "remove", help="Remove a named display, or all your named displays when no name is given"
     )
-    p_remove.add_argument("display", nargs="?", choices=("mon1", "mon2"),
-                          help="Display to remove; omit to remove both")
+    p_remove.add_argument("display", nargs="?", help="Display name; omit to remove your named displays one by one")
+    p_remove.add_argument('--managed', action='store_true', help=argparse.SUPPRESS)
     p_remove.add_argument(
         "--json",
         action="store_true",
@@ -556,7 +580,7 @@ def main(args: list[str] | None = None) -> int:
 
     # list
     p_list = subparsers.add_parser(
-        "list", help="List active Monitorize DRM connectors"
+        "list", help="List your named and app-managed Monitorize VKMS displays"
     )
     p_list.add_argument(
         "--json",
@@ -573,6 +597,9 @@ def main(args: list[str] | None = None) -> int:
         action="store_true",
         help="Output result as machine-readable JSON",
     )
+
+    p_verify = subparsers.add_parser("verify", help="Verify the installed VKMS system without changes")
+    p_verify.add_argument("--json", action="store_true")
 
     # doctor
     p_doc = subparsers.add_parser(
@@ -592,6 +619,9 @@ def main(args: list[str] | None = None) -> int:
     if parsed.command == "update":
         from monitorize_vkms.update import update
         return update(parsed.source)
+    elif parsed.command == "uninstall":
+        from monitorize_vkms.update import update
+        return update(parsed.source, uninstall=True)
     elif parsed.command == "reinstall":
         from monitorize_vkms.update import update
         return update(parsed.source, reinstall=True)
@@ -603,6 +633,9 @@ def main(args: list[str] | None = None) -> int:
         return cmd_list(parsed)
     elif parsed.command == "status":
         return cmd_status(parsed)
+    elif parsed.command == "verify":
+        from monitorize_vkms.verification import main as verify_main
+        return verify_main(["--json"] if parsed.json else [])
     elif parsed.command == "doctor":
         return cmd_doctor(parsed)
 
