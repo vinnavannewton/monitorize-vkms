@@ -101,6 +101,75 @@ class LiveReservationTests(unittest.TestCase):
             with self.assertRaises(PermissionError): facade.reserve_desktop_installed(1000,'4',generation='a'*32)
             self.assertEqual(facade.reserve_desktop_installed(1000,'3',generation='a'*32)['state'],'reserved')
 
+    def greeter(self):
+        stack = self.installed()
+        context = stack.enter_context(patch.object(runtime, 'greeter_context', return_value=(120, 'g1')))
+        stack.enter_context(patch.object(runtime, 'local_sessions', return_value=[
+            dict(seat='seat0', uid=120, session='g1', **{'class':'greeter'})]))
+        return stack, context
+
+    def test_live_greeter_reservation_remains_disconnected_and_idempotent(self):
+        stack, context = self.greeter()
+        with stack:
+            value = facade.reserve_greeter_installed(1000)
+            self.assertEqual((value['phase'], value['session'], value['state']), ('greeter', '', 'reserved'))
+            self.assertEqual((self.connector/'status').read_text(), '2')
+            self.assertEqual((self.connector/'edid').read_bytes(), generate_edid(1920,1080,60,'mon1'))
+            self.assertEqual(facade.reserve_greeter_installed(1000), value)
+            self.assertGreaterEqual(context.call_count, 6)
+
+    def test_live_greeter_reservation_rejects_wrong_account_capture_and_seat_owner(self):
+        stack, _ = self.greeter()
+        with stack:
+            with self.assertRaises(PermissionError):
+                facade.reserve_greeter_installed(1001)
+            with patch.object(runtime, 'quiescent', side_effect=BlockingIOError('capture running')):
+                with self.assertRaises(BlockingIOError):facade.reserve_greeter_installed(1000)
+            with patch.object(runtime, 'local_sessions', return_value=[dict(seat='seat0', **{'class':'user'})]):
+                with self.assertRaises(RuntimeError):facade.reserve_greeter_installed(1000)
+            self.assertIsNone(lease.read_lease(self.state, 'mon1'))
+            self.assertEqual((self.connector/'edid').read_bytes(), b'')
+
+    def test_live_greeter_change_retains_pending_and_never_connects(self):
+        stack, context = self.greeter()
+        original = runtime.program_edid
+        def change(connector, edid):
+            original(connector, edid)
+            context.return_value = (120, 'g2')
+        with stack, patch.object(runtime, 'program_edid', side_effect=change):
+            with self.assertRaisesRegex(PermissionError, 'greeter changed'):
+                facade.reserve_greeter_installed(1000)
+            self.assertEqual(lease.read_lease(self.state, 'mon1')['state'], 'pending')
+            self.assertEqual((self.connector/'status').read_text(), '2')
+
+    def test_live_greeter_refuses_connected_foreign_or_desktop_slot(self):
+        stack, _ = self.greeter()
+        with stack:
+            (self.connector/'status').write_text('1')
+            with self.assertRaises(RuntimeError):facade.reserve_greeter_installed(1000)
+            (self.connector/'status').write_text('2')
+            self.reserve()
+            before=(self.state/'primary.json').read_bytes()
+            with self.assertRaises(RuntimeError):facade.reserve_greeter_installed(1000)
+            self.assertEqual((self.state/'primary.json').read_bytes(), before)
+
+    def test_live_greeter_opt_in_requires_context_check(self):
+        with self.assertRaises(ValueError):
+            runtime.reserve_boot_output(state=self.state, connector=self.connector, uid=1000,
+                boot_id='boot-a', sessions=[], allow_greeter=True)
+        self.assertIsNone(lease.read_lease(self.state, 'mon1'))
+
+    def test_boot_unit_restart_at_live_greeter_uses_guarded_reservation(self):
+        stack, _ = self.greeter()
+        with stack, patch.object(os, 'geteuid', return_value=0), patch.object(runtime, 'require_installed'), \
+             patch.object(runtime, 'read_enrollment', return_value=dict(uid=1000, enabled=True)):
+            self.assertEqual(facade.main(), 0)
+            value = facade.boot_output_status(self.state)
+            self.assertEqual(value['phase'], 'greeter')
+            self.assertEqual((self.connector/'status').read_text(), '2')
+            self.assertEqual(facade.main(), 0)
+            self.assertEqual(facade.boot_output_status(self.state), value)
+
     def test_boot_entry_verifies_live_reservation_without_writes(self):
         with self.installed():
             self.reserve()

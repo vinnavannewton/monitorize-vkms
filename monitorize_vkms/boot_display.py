@@ -20,6 +20,7 @@ from monitorize_vkms.boot_policy import validate_protected
 GREETER_ON_DEMAND_PROTOCOL = 1
 IDLE_DISPLAY_PROTOCOL = 1
 LIVE_ENROLLMENT_PROTOCOL = 1
+LIVE_GREETER_RESERVATION_PROTOCOL = 1
 
 
 def boot_output_status(state: Path) -> dict | None:
@@ -94,6 +95,34 @@ def reserve_desktop_installed(uid: int, session: str, *, generation: str) -> dic
                 generation=generation, context_check=check)
     finally:
         os.close(lock)
+
+
+def reserve_greeter_installed(uid: int) -> dict:
+    """Recover a dormant reservation without restarting or owning the greeter."""
+    helper, runtime, settings = _installed_context()
+    if type(uid) is not int or uid != settings['uid']:
+        raise PermissionError('Only the enrolled account may reserve the display.')
+    context = runtime.greeter_context()
+    lock = helper._acquire_lifecycle_lock()
+    try:
+        return _reserve_greeter_locked(helper, runtime, settings, context)
+    finally:
+        os.close(lock)
+
+
+def _reserve_greeter_locked(helper, runtime, settings, context):
+    """Shared by installed recovery and boot-unit restart; lifecycle lock held."""
+    def check():
+        if runtime.greeter_context() != context:
+            raise PermissionError('Graphical greeter changed during reservation.')
+    check()
+    root = helper._configfs_root([])
+    _, connector = helper._require_bootstrap(root, [], 'mon1')
+    with runtime.quiescent(settings['uid']):
+        check()
+        return runtime.reserve_boot_output(state=helper.STATE_DIRECTORY, connector=connector,
+            uid=settings['uid'], boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+            sessions=runtime.local_sessions(), allow_greeter=True, context_check=check)
 
 
 def release_live_desktop_installed(uid: int, session: str, *, generation: str) -> dict:
@@ -249,9 +278,13 @@ def main() -> int:
                 session=session, boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
                 context_check=lambda: _check_desktop(runtime, settings['uid'], session))
             return 0
+        sessions = runtime.local_sessions()
+        if any(row.get('seat') == 'seat0' and row.get('class') == 'greeter' for row in sessions):
+            _reserve_greeter_locked(helper, runtime, settings, runtime.greeter_context())
+            return 0
         runtime.reserve_boot_output(state=helper.STATE_DIRECTORY, connector=connector,
                                     uid=settings['uid'], boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
-                                    sessions=runtime.local_sessions())
+                                    sessions=sessions)
     finally:
         os.close(lock)
     return 0

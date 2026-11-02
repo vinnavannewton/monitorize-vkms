@@ -102,10 +102,15 @@ def program_edid(connector: Path, edid: bytes) -> None:
 
 
 def reserve_boot_output(*, state: Path, connector: Path, uid: int,
-                        boot_id: str, sessions: list[dict]) -> dict:
+                        boot_id: str, sessions: list[dict], allow_greeter: bool = False,
+                        context_check=None) -> dict:
     if type(uid) is not int or uid <= 0 or not isinstance(boot_id, str) or not boot_id:
         raise ValueError('Invalid boot display owner.')
-    no_seat_owner(sessions)
+    if type(allow_greeter) is not bool or (allow_greeter and not callable(context_check)):
+        raise ValueError('A verified live greeter context is required.')
+    no_seat_owner(sessions, allow_greeter=allow_greeter)
+    if context_check is not None:
+        context_check()
     connector_ready(connector)
     if (connector / 'status').read_text().strip() != '2':
         raise RuntimeError('Boot output is already connected; refusing reservation.')
@@ -125,8 +130,14 @@ def reserve_boot_output(*, state: Path, connector: Path, uid: int,
         value = dict(schema_version=2, protected=True, owner_kind='remote-login', uid=uid,
                      phase='greeter', session='', boot_id=boot_id, generation=secrets.token_hex(16),
                      mode=list(MODE), edid_sha256=digest, state='pending')
+    if context_check is not None:
+        context_check()
     write_lease(state, 'mon1', value)
     program_edid(connector, edid)
+    if (connector / 'edid').read_bytes() != edid:
+        raise RuntimeError('Boot reservation EDID readback failed.')
+    if context_check is not None:
+        context_check()
     value['state'] = 'reserved'
     write_lease(state, 'mon1', value)
     return value
