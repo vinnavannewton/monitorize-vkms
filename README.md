@@ -265,3 +265,12 @@ Missing headers and signing-trust failures are retried automatically. Existing
 installed artifacts are preserved; this worker does not replace an older
 installed module version. Use the normal reinstall/update path for replacement.
 Automatic kernel-update acceptance across supported distros remains pending.
+
+### Secure Boot enrollment compatibility (1.0.2)
+
+Installer and automatic kernel preparation accept the exact English mokutil
+"is already enrolled" response with exit status 0 or 1, covering the reported
+Fedora mokutil 0.7.2 result. Checks run with LC_ALL=C, preserve errors, and require
+the certificate key identifier to match the signed module. A nonzero status
+alone is never accepted. No new enrollment is needed for an already enrolled
+matching certificate. OpenSSL is required for certificate inspection.

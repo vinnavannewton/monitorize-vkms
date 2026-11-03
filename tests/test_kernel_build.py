@@ -67,3 +67,11 @@ class KernelBuildTests(unittest.TestCase):
                 worker.prepare('future')
                 self.assertEqual(save.call_args.args[1]['state'], 'needs_attention')
                 run.assert_not_called()
+
+    def test_worker_uses_shared_enrollment_check_for_matching_key(self):
+        key = 'AA:BB:CC:DD:EE:FF:00:11'
+        def command(*args, **kwargs):
+            return 'SecureBoot enabled' if args[:2] == ('mokutil', '--sb-state') else key
+        with patch.object(worker.Path, 'exists', return_value=True), patch.object(worker.Path, 'is_file', return_value=True), patch.object(worker, 'run', side_effect=command), patch.object(worker, 'check_enrollment') as enrollment:
+            worker.signing_check('module')
+            enrollment.assert_called_once_with(Path('/var/lib/dkms/mok.pub'))

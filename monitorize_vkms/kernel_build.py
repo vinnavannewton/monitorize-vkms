@@ -15,6 +15,7 @@ import time
 if __name__ == '__main__':
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from monitorize_vkms import __version__
+from monitorize_vkms.secure_boot import check_enrollment
 
 STATE = Path('/var/lib/monitorize-vkms/kernel-builds')
 MODULES = Path('/lib/modules')
@@ -123,7 +124,7 @@ def signing_check(module):
                    '-noout', '-ext', 'subjectKeyIdentifier', timeout=10)
         identifiers = re.findall(r'(?:[0-9A-Fa-f]{2}:){7,}[0-9A-Fa-f]{2}', text)
         if key and any(value.replace(':', '').lower() == key for value in identifiers):
-            run('mokutil', '--test-key', str(certificate), timeout=10)
+            check_enrollment(certificate)
             return
     raise RuntimeError('Secure Boot: enroll the certificate matching the module signing key; custom signing configuration requires manual verification')
 

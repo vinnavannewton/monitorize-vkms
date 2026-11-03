@@ -1,6 +1,6 @@
 # Build from a release source tree: makepkg --nodeps (dependencies must be installed).
 pkgname=monitorize-vkms
-pkgver=1.0.1
+pkgver=1.0.2
 pkgrel=1
 pkgdesc='Monitorize virtual displays with protected remote-login host support'
 arch=('x86_64' 'aarch64')

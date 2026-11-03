@@ -133,7 +133,7 @@ check_prerequisites() {
 	[[ -d /run/systemd/system ]] || die "This source installer requires a running systemd system and systemd-logind"
 	local missing=()
 	local command
-	for command in dkms make gcc install modinfo depmod find sort flock nm grep cmp mktemp chmod mv chown systemctl loginctl setpriv modprobe readlink tr mkdir ln python3 pkexec pkcheck wlr-randr; do
+	for command in openssl dkms make gcc install modinfo depmod find sort flock nm grep cmp mktemp chmod mv chown systemctl loginctl setpriv modprobe readlink tr mkdir ln python3 pkexec pkcheck wlr-randr; do
 		command -v "$command" >/dev/null || missing+=("$command")
 	done
 	python3 -I -c 'import dbus; import gi; gi.require_version("GLib", "2.0"); from gi.repository import GLib' >/dev/null 2>&1 || missing+=("python3-dbus and python3-gobject/gi")
@@ -344,18 +344,9 @@ record_stock_module() {
 }
 
 secure_boot_key_is_enrolled() {
-	local certificate
-	for certificate in \
-		/var/lib/dkms/mok.pub \
-		/var/lib/shim-signed/mok/MOK.der \
-		/etc/dkms/mok.pub; do
-		[[ -r "$certificate" ]] || continue
-		if mokutil --test-key "$certificate" >/dev/null 2>&1; then
-			log "Secure Boot trusts DKMS certificate ${certificate}"
-			return 0
-		fi
-	done
-	return 1
+	# The shared checker preserves mokutil --test-key diagnostics and verifies
+	# the enrolled certificate matches this artifact, not merely a signer name.
+	python3 -I "${REPOSITORY_DIR}/monitorize_vkms/secure_boot.py" --module "$1"
 }
 
 verify_installation() {
@@ -386,7 +377,7 @@ verify_installation() {
 	if [[ "$SECURE_BOOT_STATE" == "enabled" ]]; then
 		signer="$(modinfo -F signer "$preferred")"
 		[[ -n "$signer" ]] || die "Secure Boot is enabled but DKMS produced an unsigned module"
-		secure_boot_key_is_enrolled ||
+		secure_boot_key_is_enrolled "$preferred" ||
 			die "${MODULE_NAME} is signed by ${signer}, but no enrolled DKMS certificate could be verified; enroll the DKMS MOK first (recommended), or disable Secure Boot in BIOS/UEFI and retry. Import the matching certificate with sudo mokutil --import /var/lib/dkms/mok.pub, reboot, then confirm Enroll MOK in the machine console"
 	fi
 }
