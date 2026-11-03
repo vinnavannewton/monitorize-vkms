@@ -51,7 +51,7 @@ def _request(sender: str, uid: int, action: str, argv: list[str], interactive=Tr
     enrolled = bool(record and record['enabled'])
     if not (enrolled or (record and cleanup)):
         if not interactive:
-            raise PermissionError('Enable unattended VKMS displays in Monitorize setup before starting this listener.')
+            raise PermissionError('Enable passwordless login in Monitorize Settings before starting this listener.')
         checked = subprocess.run(
             ['/usr/bin/pkcheck', '--action-id', ACTION_PREFIX + action,
              '--system-bus-name', sender, '--allow-user-interaction'],
