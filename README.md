@@ -239,3 +239,29 @@ This removes the DKMS module, bootstrap service, CLI, helper, and Polkit policy,
 - **Failure Rollback**: Installation failures trigger rollback of installer-managed changes and restoration of saved state. If rollback is incomplete, the installer reports it and preserves recovery snapshots.
 
 Hyprland VKMS needs **Aquamarine 0.15.1 or newer** for the shared-EGL teardown fix
+
+## Automatic kernel preparation
+
+Version 1.0.1 installs `monitorize-vkms-kernel-build.timer`. It scans installed
+kernels every 15 minutes and prepares missing modules through DKMS without
+blocking OS package transactions. Matching development files must be installed.
+DKMS AUTOINSTALL stays disabled because this timer owns automatic preparation.
+The worker never activates or unloads a display driver. Reboot normally after
+preparation, then run `monitorize-vkms verify`. Per-kernel results appear in
+`verify --json` and Monitorize Settings diagnostics.
+
+With Secure Boot disabled, no MOK enrollment is requested. With Secure Boot
+enabled, enroll the certificate matching the DKMS signing key (recommended), or
+disable Secure Boot in BIOS/UEFI and retry. For the default DKMS certificate:
+`sudo mokutil --import /var/lib/dkms/mok.pub`; set a temporary password, reboot,
+and confirm Enroll MOK in the machine/VM console. Enrollment is normally once
+per signing key, not once per kernel. Custom certificate locations currently
+require manual trust verification; the worker reports needs attention.
+
+Failed builds are recorded under `/var/lib/monitorize-vkms/kernel-builds`.
+An unchanged failed source/header combination is not rebuilt continuously.
+After investigating, remove only that kernel's JSON record as root to retry.
+Missing headers and signing-trust failures are retried automatically. Existing
+installed artifacts are preserved; this worker does not replace an older
+installed module version. Use the normal reinstall/update path for replacement.
+Automatic kernel-update acceptance across supported distros remains pending.

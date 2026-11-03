@@ -81,9 +81,10 @@ custom module has a different filename and does not replace that distro file.
 
 ## Kernel updates and Secure Boot
 
-Automatic DKMS installation into future kernels is disabled. Boot the new
-kernel and rerun `install.sh`, which first compiles the entire module without
-changing the system. The development-built module is unsigned, so systems
+Native DKMS AUTOINSTALL is disabled; the separate kernel-build timer prepares
+missing modules for installed kernels in the background. See README automatic
+kernel preparation for limits and recovery. Manual `install.sh` still performs
+a disposable compatibility preflight before installation. The development-built module is unsigned, so systems
 enforcing Secure Boot or module-signature validation may reject it. The DKMS
 installer accepts Secure Boot only when it can verify both the signature and
 enrollment of a known DKMS MOK certificate.

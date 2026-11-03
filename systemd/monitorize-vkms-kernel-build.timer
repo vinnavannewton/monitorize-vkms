@@ -1,0 +1,11 @@
+[Unit]
+Description=Automatically prepare Monitorize VKMS after kernel updates
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/15
+RandomizedDelaySec=30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

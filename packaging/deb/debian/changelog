@@ -1,3 +1,9 @@
+monitorize-vkms (1.0.1-1) unstable; urgency=medium
+
+  * Release Monitorize VKMS 1.0.1.
+
+ -- vinnavannewton <vinnavannewton@proton.me>  Tue, 03 Nov 2026 13:39:08 +0530
+
 monitorize-vkms (1.0-1) unstable; urgency=medium
 
   * Bump Monitorize VKMS to version 1.0.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare Monitorize VKMS for installed kernels
+ConditionPathExists=/usr/lib/monitorize-vkms/VERSION
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/lib/monitorize-vkms/monitorize_vkms/kernel_build.py
+TimeoutStartSec=20min
+KillMode=control-group
+Nice=15
+IOSchedulingClass=idle
+Environment=MAKEFLAGS=-j2

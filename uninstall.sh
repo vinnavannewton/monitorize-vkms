@@ -34,6 +34,15 @@ require_root() {
 }
 
 acquire_global_lock() {
+	# Serialize registered source changes with automatic builds.
+	[[ ! -L /run/lock/monitorize-vkms-maintenance.lock ]] || die 'Unsafe maintenance lock'
+	if [[ -e /run/lock/monitorize-vkms-maintenance.lock ]]; then
+		[[ -f /run/lock/monitorize-vkms-maintenance.lock && -O /run/lock/monitorize-vkms-maintenance.lock ]] || die 'Unsafe maintenance lock'
+	fi
+	(umask 077; touch /run/lock/monitorize-vkms-maintenance.lock)
+	exec 8<>/run/lock/monitorize-vkms-maintenance.lock
+	flock -n 8 || die 'Automatic kernel maintenance is running; retry shortly'
+
 	if [[ -L "$LOCK_PATH" ]]; then
 		die "Refusing symlinked lifecycle lock: ${LOCK_PATH}"
 	fi
@@ -139,6 +148,8 @@ restore_modprobe_configuration() {
 }
 
 remove_bootstrap_service() {
+	systemctl disable --now monitorize-vkms-kernel-build.timer monitorize-vkms-kernel-build.service >/dev/null 2>&1 || true
+	rm -f /usr/lib/systemd/system/monitorize-vkms-kernel-build.service /usr/lib/systemd/system/monitorize-vkms-kernel-build.timer
 	if command -v systemctl >/dev/null; then
 		systemctl disable monitorize-vkms-bootstrap.service >/dev/null 2>&1 || true
 	fi

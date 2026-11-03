@@ -76,9 +76,20 @@ def main() -> int:
         assert_removal_safe()
     elif args.action == 'pre-upgrade':
         assert_upgrade_safe(args.target_version)
+    if args.action in ('pre-upgrade', 'pre-remove'):
+        # Older installations have no worker units. Do not reject their upgrade.
+        for unit in ('monitorize-vkms-kernel-build.timer', 'monitorize-vkms-kernel-build.service'):
+            loaded = subprocess.run(['systemctl', 'show', unit, '--property=LoadState', '--value'],
+                                    capture_output=True, text=True, check=False)
+            if loaded.stdout.strip() == 'loaded':
+                subprocess.run(['systemctl', 'stop', unit], check=True)
     elif args.action == 'post-install':
-        subprocess.run(['dkms', 'install', '-m', 'monitorize-vkms', '-v', __version__, '-k', os.uname().release], check=True)
+        status = subprocess.run(['dkms', 'status', '-m', 'monitorize-vkms', '-v', __version__],
+                                capture_output=True, text=True, check=True)
+        if not status.stdout.strip():
+            subprocess.run(['dkms', 'add', '-m', 'monitorize-vkms', '-v', __version__], check=True)
         subprocess.run(['systemctl', 'daemon-reload'], check=True)
+        subprocess.run(['systemctl', 'enable', '--now', 'monitorize-vkms-kernel-build.timer'], check=True)
         # Bootstrap only affects the next boot. Do not start it against a live GPU.
         subprocess.run(['systemctl', 'enable', 'monitorize-vkms-bootstrap.service'], check=True)
     elif args.action == 'post-remove':

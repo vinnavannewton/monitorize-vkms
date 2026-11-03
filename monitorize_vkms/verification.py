@@ -102,12 +102,21 @@ def verify(*, root=Path('/'), kernel=None, run=subprocess.run):
         if record.is_file():
             value = json.loads(record.read_text())
             reboot = value.get('boot_id') == path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        kernel_builds = []
+        for record_path in path('/var/lib/monitorize-vkms/kernel-builds').glob('*.json'):
+            try:
+                if record_path.stat().st_size <= 16384:
+                    record_value = json.loads(record_path.read_text())
+                    if isinstance(record_value, dict):
+                        kernel_builds.append(record_value)
+            except (OSError, ValueError):
+                continue
         passed = all(item['status'] == 'PASS' for item in checks)
         state = 'restart_required' if reboot else 'working' if passed else 'needs_attention'
         message = {'restart_required': 'System restart required', 'working': 'Verified — working',
                    'needs_attention': 'Needs attention'}[state]
         return dict(schema_version=1, installed=True, version=version, state=state,
-                    message=message, checks=checks, reboot_required=reboot)
+                    message=message, checks=checks, reboot_required=reboot, kernel_builds=kernel_builds)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         return dict(schema_version=1, installed=installed, version=version, state='could_not_verify',
                     message='Could not verify installation', detail=str(error), checks=checks, reboot_required=False)

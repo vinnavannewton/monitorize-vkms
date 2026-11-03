@@ -28,6 +28,8 @@ def stage_host_assets(destination: Path) -> None:
         'packaging/monitorize-vkms.conf': ('usr/lib/modprobe.d/monitorize-vkms.conf', 0o644),
         'LICENSE': ('usr/share/licenses/monitorize-vkms/LICENSE', 0o644),
     }
+    for unit in ('monitorize-vkms-kernel-build.service', 'monitorize-vkms-kernel-build.timer'):
+        files['systemd/' + unit] = ('usr/lib/systemd/system/' + unit, 0o644)
     copies = list(files.items())
     for source in (ROOT / 'monitorize_vkms').glob('*.py'):
         copies.append((str(source.relative_to(ROOT)), ('usr/lib/monitorize-vkms/monitorize_vkms/' + source.name,

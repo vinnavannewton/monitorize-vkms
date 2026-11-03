@@ -151,6 +151,15 @@ check_prerequisites() {
 }
 
 acquire_global_lock() {
+	# Serialize registered source changes with automatic builds.
+	[[ ! -L /run/lock/monitorize-vkms-maintenance.lock ]] || die 'Unsafe maintenance lock'
+	if [[ -e /run/lock/monitorize-vkms-maintenance.lock ]]; then
+		[[ -f /run/lock/monitorize-vkms-maintenance.lock && -O /run/lock/monitorize-vkms-maintenance.lock ]] || die 'Unsafe maintenance lock'
+	fi
+	(umask 077; touch /run/lock/monitorize-vkms-maintenance.lock)
+	exec 8<>/run/lock/monitorize-vkms-maintenance.lock
+	flock -n 8 || die 'Automatic kernel maintenance is running; retry shortly'
+
 	if [[ -L "$LOCK_PATH" ]]; then
 		die "Refusing symlinked lifecycle lock: ${LOCK_PATH}"
 	fi
@@ -378,7 +387,7 @@ verify_installation() {
 		signer="$(modinfo -F signer "$preferred")"
 		[[ -n "$signer" ]] || die "Secure Boot is enabled but DKMS produced an unsigned module"
 		secure_boot_key_is_enrolled ||
-			die "${MODULE_NAME} is signed by ${signer}, but no enrolled DKMS certificate could be verified; enroll the DKMS MOK first"
+			die "${MODULE_NAME} is signed by ${signer}, but no enrolled DKMS certificate could be verified; enroll the DKMS MOK first (recommended), or disable Secure Boot in BIOS/UEFI and retry. Import the matching certificate with sudo mokutil --import /var/lib/dkms/mok.pub, reboot, then confirm Enroll MOK in the machine console"
 	fi
 }
 
@@ -472,7 +481,7 @@ backup_install_targets() {
 	for target in "$MODPROBE_CONFIG" "$CONFIG_BACKUP" "$BOOTSTRAP_PATH" "$BOOTSTRAP_UNIT_PATH" \
 		"$HELPER_PATH" "$AUTHORIZATION_PATH" "$DBUS_PATH" "$DBUS_UNIT_PATH" "$DBUS_ACTIVATION_PATH" "$DBUS_POLICY_PATH" "$DBUS_INTERFACE_PATH" \
 		"$POLKIT_POLICY_PATH" "$CLI_PATH" "$PYTHON_LIB_DIR" "$CAPABILITIES_PATH" "$SOURCE_DIR" "${STATE_DIR}/reboot-required.json" \
-		"/var/lib/dkms/${PACKAGE_NAME}"; do
+		"/var/lib/dkms/${PACKAGE_NAME}" /usr/lib/systemd/system/monitorize-vkms-kernel-build.service /usr/lib/systemd/system/monitorize-vkms-kernel-build.timer; do
 		backup_one_target "$target"
 	done
 	# Preserve the previously installed module artifacts and legacy DKMS records
@@ -579,6 +588,11 @@ main() {
 	if ((MODULE_REPLACED)); then
 		/usr/bin/python3 -I -B "${REPOSITORY_DIR}/monitorize_vkms/verification.py" --record-reboot
 	fi
+	for unit in monitorize-vkms-kernel-build.service monitorize-vkms-kernel-build.timer; do
+		install -D -o root -g root -m 0644 "${REPOSITORY_DIR}/systemd/${unit}" "/usr/lib/systemd/system/${unit}"
+	done
+	systemctl daemon-reload
+	systemctl enable --now monitorize-vkms-kernel-build.timer
 	INSTALL_COMMITTED=1
 
 	printf '\n==========================================\n'
