@@ -932,7 +932,7 @@ def main() -> int:
         response["api_version"] = 1
         response["displays"] = list(INSTANCE_NAMES)
         response["topology_ready"] = True
-        response['managed_layout_backends'] = ['x11', 'hyprland', 'niri']
+        response['managed_layout_backends'] = ['kde', 'x11', 'hyprland', 'niri']
         from monitorize_vkms.protocols import capabilities
         response["remote_login_protocols"] = capabilities()
     elif args.operation == "status":
