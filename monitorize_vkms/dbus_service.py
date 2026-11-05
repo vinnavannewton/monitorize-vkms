@@ -92,7 +92,7 @@ def _execute_helper(uid, action, argv, unattended=False):
             )):
         return json.dumps({"success": True, "api_version": 1, "displays": ["mon1", "mon2"],
                            "topology_ready": False, "message": message})
-    if result.returncode and argv[0] != "destroy-all":
+    if result.returncode and argv[0] != "destroy-all" and response.get("cleanup_state") != "not_needed":
         raise RuntimeError(message)
     return json.dumps(response)
 

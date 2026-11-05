@@ -82,6 +82,13 @@ class SessionDiscoveryTests(unittest.TestCase):
         self.assertEqual(session, "3")
         self.assertEqual(env["NIRI_SOCKET"], recovered["NIRI_SOCKET"])
 
+    def test_kde_missing_socket_is_recovered_despite_dbus_desktop(self):
+        properties = "Active=yes\nRemote=no\nType=wayland\nDesktop=KDE\nLeader=0\nUser=1000\n"
+        with patch.object(helper.shutil, "which", return_value="/usr/bin/loginctl"), patch.object(helper.subprocess, "run", side_effect=[SimpleNamespace(stdout="3"), SimpleNamespace(stdout=properties)]), patch.object(helper.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir="/home/test", pw_name="test")), patch.object(helper, "_session_connection_environment", return_value={"WAYLAND_DISPLAY": "wayland-1"}) as resolve:
+            _, env = helper._active_session(1000)
+        resolve.assert_called_once_with(1000, "3")
+        self.assertEqual(env["WAYLAND_DISPLAY"], "wayland-1")
+
     def test_recovery_rejects_remote_sessions_before_scanning(self):
         properties = "Active=yes\nRemote=yes\nType=wayland\nDesktop=niri\nLeader=0\nUser=1000\n"
         with patch.object(helper.shutil, "which", return_value="/usr/bin/loginctl"), \

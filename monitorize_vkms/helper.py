@@ -141,7 +141,7 @@ def _active_session(uid: int, *, allow_inactive=False) -> tuple[str, dict[str, s
                 name in env.get("XDG_CURRENT_DESKTOP", "").lower()
                 for name in ("kde", "plasma", "gnome", "cinnamon")
             )
-            if values.get("Type") == "wayland" and not known_dbus_desktop and (
+            if values.get("Type") == "wayland" and (not known_dbus_desktop or "kde" in env.get("XDG_CURRENT_DESKTOP", "").lower() or "plasma" in env.get("XDG_CURRENT_DESKTOP", "").lower()) and (
                 not env.get("WAYLAND_DISPLAY")
                 or ("niri" in env.get("XDG_CURRENT_DESKTOP", "").lower() and not env.get("NIRI_SOCKET"))
             ):
@@ -761,7 +761,11 @@ def _create_request(args, root, logs, uid, session_id, env):
               if item.get("display") == args.slot and item.get("status") == "connected"]
     if before:
         raise VkmsHelperError(f"{args.slot}'s DRM connector is already connected.")
-    snapshot = _run_worker(uid, env, {"action": "snapshot"})
+    try:
+        snapshot = _run_worker(uid, env, {"action": "snapshot"})
+    except VkmsHelperError as exc:
+        exc.cleanup_state = "not_needed"
+        raise
     desktop = snapshot.get("desktop")
     _validate_compositor_support(desktop, env)
     if desktop is not None and args.mode is None:
@@ -959,5 +963,5 @@ if __name__ == "__main__":
         print(json.dumps({"success": False, "message": str(exc), "error_kind": "custom_edid_unsupported"}))
         sys.exit(1)
     except (OSError, RuntimeError, ValueError) as exc:
-        print(json.dumps({"success": False, "message": str(exc), "error_kind": getattr(exc, "error_kind", "helper_error")}))
+        print(json.dumps({"success": False, "message": str(exc), "error_kind": getattr(exc, "error_kind", "helper_error"), "cleanup_state": getattr(exc, "cleanup_state", "unknown")}))
         sys.exit(1)
