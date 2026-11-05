@@ -97,6 +97,26 @@ Use the header package for your kernel instead of `linux-headers` when needed:
 
 Custom and AUR kernels need their corresponding header package.
 
+### Omarchy
+
+Update your system:
+
+```bash
+sudo pacman -Syu
+```
+
+If the kernel was updated, reboot before continuing:
+
+```bash
+sudo reboot
+```
+
+Install dependencies for the standard `linux-omarchy` kernel:
+
+```bash
+sudo pacman -S --needed git dkms base-devel linux-omarchy-headers python python-dbus python-gobject polkit mokutil wlr-randr
+```
+
 ### Fedora
 
 Update and reboot first so the kernel development files match the running
