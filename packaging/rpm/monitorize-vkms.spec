@@ -1,5 +1,5 @@
 Name: monitorize-vkms
-Version: 1.0.2
+Version: 1.1
 Release: 1%{?dist}
 Summary: Monitorize virtual display host with protected remote-login lifecycle
 License: GPL-2.0-only

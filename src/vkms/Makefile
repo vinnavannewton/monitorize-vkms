@@ -5,6 +5,15 @@ KDIR ?= /lib/modules/$(shell uname -r)/build
 FEATURE_HEADER := $(CURDIR)/vkms_oot_features.h
 ATOMIC_API_PROBE := $(CURDIR)/../../scripts/probe-drm-atomic-api.sh
 
+ifneq ($(src),)
+# Keep the module metadata in sync with the release used by DKMS.
+monitorize_vkms_version := $(strip $(shell cat "$(src)/../../VERSION"))
+ifeq ($(monitorize_vkms_version),)
+$(error Missing Monitorize VKMS release version)
+endif
+CFLAGS_vkms_drv.o += -DMONITORIZE_VKMS_VERSION='"$(monitorize_vkms_version)"'
+endif
+
 obj-m := monitorize_vkms.o
 
 monitorize_vkms-y := \
