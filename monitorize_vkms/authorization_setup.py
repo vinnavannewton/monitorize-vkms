@@ -17,7 +17,7 @@ def main():
     if not uid.isdecimal() or len(sys.argv) != 2 or sys.argv[1] not in ('enable', 'disable'):
         raise ValueError('Invoke through the authorized setup action with enable or disable.')
     result = set_enabled(int(uid), sys.argv[1] == 'enable')
-    result['message'] = 'Passwordless login enabled.' if result['unattended_enabled'] else 'Passwordless login disabled. Existing displays can still clean up.'
+    result['message'] = 'Passwordless Display Creation enabled.' if result['unattended_enabled'] else 'Passwordless Display Creation disabled. Existing displays can still clean up.'
     print(json.dumps(result))
 
 
