@@ -41,12 +41,15 @@ class Timing:
 
 
 EDID_HEADER = b"\x00\xff\xff\xff\xff\xff\xff\x00"
+EDID_VENDOR_ATLANTIS = b"\x0c\xc7"  # PnP ID CFG
+EDID_VENDOR_LEGACY = b"\x35\xee"  # PnP ID MON
 
 
 def display_from_edid(edid: bytes) -> str | None:
     """Identify only the two EDIDs generated for Monitorize display slots."""
     if (len(edid) != 128 or edid[:8] != EDID_HEADER or sum(edid) % 256
-            or edid[8:10] != b"\x35\xee" or edid[72:77] != b"\x00\x00\x00\xfc\x00"):
+            or edid[8:10] not in (EDID_VENDOR_ATLANTIS, EDID_VENDOR_LEGACY)
+            or edid[72:77] != b"\x00\x00\x00\xfc\x00"):
         return None
     if (int.from_bytes(edid[10:12], 'little') == 0x7504
             and edid[108:113] == b"\x00\x00\x00\xff\x00"):
@@ -198,7 +201,7 @@ def generate_edid(width: int, height: int, refresh_hz: float, display: str = "mo
 
     edid = bytearray(128)
     edid[:8] = EDID_HEADER
-    edid[8:10] = (0x35EE).to_bytes(2, "big")
+    edid[8:10] = EDID_VENDOR_ATLANTIS
     edid[10:12] = (0x7502 if display == "mon1" else 0x7503).to_bytes(2, "little")
     edid[12:16] = (1 if display == "mon1" else 2).to_bytes(4, "little")
     if named:
@@ -214,7 +217,7 @@ def generate_edid(width: int, height: int, refresh_hz: float, display: str = "mo
     edid[90:108] = _descriptor(0xFD, bytes((24, 240, 30, 255, max_pixel_clock_units, 0, 0, 0)))
     # KWin prefers an ASCII EISA descriptor over the required binary PNP ID.
     # An intentionally blank optional descriptor prevents KDE from prepending
-    # the synthetic "MON" manufacturer code to the display model name.
+    # the manufacturer code to the display model name.
     edid[108:126] = _descriptor(0xFF, edid_identity(display).encode('ascii')) if named else _descriptor(0xFE, b"")
     edid[126] = 0
     edid[127] = (-sum(edid[:127])) & 0xFF
