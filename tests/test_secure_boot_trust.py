@@ -17,6 +17,35 @@ class EnrollmentTests(unittest.TestCase):
                 secure_boot.check_enrollment(CERT, execute=execute)
                 self.assertEqual(execute.call_args.kwargs['env']['LC_ALL'], 'C')
 
+    def test_opensuse_accepts_positive_enrollment_with_keyring_warning(self):
+        warning = 'Failed to access kernel trusted keyring: Required key not available'
+        execute = Mock(return_value=self.result(0, CERT+' is already enrolled', warning))
+        secure_boot.check_enrollment(CERT, execute=execute)
+        execute.return_value.stdout = CERT+' is not enrolled'
+        with self.assertRaisesRegex(RuntimeError, 'enrollment check failed'):
+            secure_boot.check_enrollment(CERT, execute=execute)
+
+    def test_serial_match_requires_the_issuer_name(self):
+        certificate = ('serial=AABBCCDDEEFF0011\nissuer=\n'
+                       '    commonName = DKMS signing key\n'
+                       '    11:22:33:44:55:66:77:88')
+        for signer in ('DKMS signing key', 'Unexpected issuer'):
+            with self.subTest(signer=signer):
+                def command(args, **kwargs):
+                    if args[0] == 'openssl':
+                        return Mock(stdout=certificate)
+                    return Mock(stdout=signer if args[2] == 'signer' else 'AA:BB:CC:DD:EE:FF:00:11')
+                with patch.object(secure_boot.Path, 'is_file', return_value=True), \
+                     patch.object(secure_boot.subprocess, 'run', side_effect=command), \
+                     patch.object(secure_boot, 'check_enrollment') as enrollment:
+                    if signer == 'DKMS signing key':
+                        secure_boot.require_trusted_module('module')
+                        enrollment.assert_called_once_with(CERT)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'matches'):
+                            secure_boot.require_trusted_module('module')
+                        enrollment.assert_not_called()
+
     def test_rejects_non_enrollment_unknown_and_errors(self):
         for code, output, error in [(1, CERT+' is not enrolled', ''),
                                     (0, CERT+' is blocked in dbx', ''),

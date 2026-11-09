@@ -16,7 +16,12 @@ def check_enrollment(certificate, *, execute=subprocess.run):
                      capture_output=True, text=True, timeout=10,
                      env={**os.environ, 'LC_ALL': 'C', 'LANG': 'C'})
     expected = str(certificate) + ' is already enrolled'
-    if result.returncode in (0, 1) and result.stdout.strip() == expected and not result.stderr.strip():
+    warning = result.stderr.strip()
+    # openSUSE mokutil can confirm enrollment via the MOK list even when
+    # the kernel trusted keyring is unavailable.
+    keyring_unavailable = 'Failed to access kernel trusted keyring: Required key not available'
+    if (result.returncode in (0, 1) and result.stdout.strip() == expected
+            and (not warning or (result.returncode == 0 and warning == keyring_unavailable))):
         return
     detail = (result.stdout + '\n' + result.stderr).strip()
     raise RuntimeError(f'Certificate enrollment check failed (exit {result.returncode}): '
@@ -34,9 +39,18 @@ def require_trusted_module(module):
         if not Path(name).is_file():
             continue
         text = command('openssl', 'x509', '-inform', 'DER', '-in', name,
-                       '-noout', '-ext', 'subjectKeyIdentifier')
+                       '-noout', '-serial', '-issuer', '-nameopt', 'multiline',
+                       '-ext', 'subjectKeyIdentifier')
         identifiers = re.findall(r'(?:[0-9A-Fa-f]{2}:){7,}[0-9A-Fa-f]{2}', text)
-        if any(value.replace(':', '').lower() == key for value in identifiers):
+        matches_key_id = any(value.replace(':', '').lower() == key for value in identifiers)
+        # kmod may report the PKCS#7 issuer and serial instead of the key ID.
+        serial = re.search(r'^serial=([0-9a-f]+)$', text, re.MULTILINE | re.IGNORECASE)
+        issuer_cn = re.search(r'^\s*commonName\s*=\s*(.+)$', text, re.MULTILINE)
+        matches_issuer_serial = (
+            serial and issuer_cn and int(serial[1], 16) == int(key, 16)
+            and command('modinfo', '-F', 'signer', module) == issuer_cn[1].strip()
+        )
+        if matches_key_id or matches_issuer_serial:
             check_enrollment(name)
             print('Secure Boot trusts matching DKMS certificate ' + name)
             return
