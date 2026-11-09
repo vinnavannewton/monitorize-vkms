@@ -69,6 +69,15 @@ class TestCli(unittest.TestCase):
         self.assertIn("checks", data)
         self.assertGreaterEqual(len(data["checks"]), 8)
 
+    def test_cli_create_reports_the_missing_positional_argument(self):
+        for value, missing in (("2340x1080@60", "name"), ("tablet", "mode")):
+            with self.subTest(value=value):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as ctx:
+                    main(["create", value])
+                self.assertEqual(ctx.exception.code, 2)
+                self.assertIn(f"arguments are required: {missing}", stderr.getvalue())
+
     def test_cli_create_invalid_mode_json(self):
         f = io.StringIO()
         with contextlib.redirect_stdout(f):

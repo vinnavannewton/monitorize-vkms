@@ -547,11 +547,12 @@ def main(args: list[str] | None = None) -> int:
 
     # create
     p_create = subparsers.add_parser(
-        "create", help="Create a virtual display with specified resolution and refresh rate"
+        "create", usage="%(prog)s [-h] [-f] [--json] name mode",
+        help="Create a virtual display with specified resolution and refresh rate"
     )
     p_create.add_argument("name", type=validate_name, help='Display name; quote names containing spaces')
     p_create.add_argument(
-        "mode",
+        "mode", nargs="?",
         help="Resolution and refresh rate (e.g. 1920x1080, 2340x1080@60, 2560x1440@120)",
     )
     p_create.add_argument(
@@ -626,6 +627,12 @@ def main(args: list[str] | None = None) -> int:
         from monitorize_vkms.update import update
         return update(parsed.source, reinstall=True)
     elif parsed.command == "create":
+        if parsed.mode is None:
+            try:
+                parse_mode(parsed.name)
+            except ValueError:
+                p_create.error("the following arguments are required: mode")
+            p_create.error("the following arguments are required: name (display name before mode)")
         return cmd_create(parsed)
     elif parsed.command == "remove":
         return cmd_remove(parsed)
