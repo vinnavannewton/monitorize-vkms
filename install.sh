@@ -331,7 +331,7 @@ remove_legacy_versions() {
 	depmod -a "$KERNEL"
 	stock="$(modinfo -k "$KERNEL" -n vkms 2>/dev/null || true)"
 	case "$stock" in
-		"/lib/modules/${KERNEL}/kernel/"*) ;;
+		"/lib/modules/${KERNEL}/kernel/"*|"/usr/lib/modules/${KERNEL}/kernel/"*) ;;
 		"(builtin)") log "Kernel ${KERNEL} provides built-in VKMS" ;;
 		"") log "Kernel ${KERNEL} has no stock VKMS implementation" ;;
 		*) die "Legacy external vkms still resolves after migration: ${stock}" ;;
@@ -356,7 +356,8 @@ verify_installation() {
 		die "modinfo cannot resolve ${MODULE_NAME} for ${KERNEL}"
 	log "Installed Monitorize VKMS: ${preferred}"
 	case "$preferred" in
-		"/lib/modules/${KERNEL}/updates/"*|"/lib/modules/${KERNEL}/extra/"*) ;;
+		"/lib/modules/${KERNEL}/updates/"*|"/lib/modules/${KERNEL}/extra/"*|\
+		"/usr/lib/modules/${KERNEL}/updates/"*|"/usr/lib/modules/${KERNEL}/extra/"*) ;;
 		*) die "${MODULE_NAME} is outside a recognized external-module directory" ;;
 	esac
 	verify_module_file "$preferred"
@@ -368,7 +369,7 @@ verify_installation() {
 	[[ "$stock" == "$STOCK_VKMS_BEFORE" ]] ||
 		die "Stock VKMS changed during installation: ${STOCK_VKMS_BEFORE:-absent} -> ${stock:-absent}"
 	case "$stock" in
-		"/lib/modules/${KERNEL}/kernel/"*) log "Distro VKMS remains untouched: ${stock}" ;;
+		"/lib/modules/${KERNEL}/kernel/"*|"/usr/lib/modules/${KERNEL}/kernel/"*) log "Distro VKMS remains untouched: ${stock}" ;;
 		"(builtin)") log "Built-in VKMS remains untouched" ;;
 		"") log "No stock VKMS implementation is installed for ${KERNEL}" ;;
 		*) die "A legacy external module still overrides distro vkms: ${stock}" ;;
@@ -483,7 +484,8 @@ backup_install_targets() {
 		for module_file in "$(modinfo -k "$target_kernel" -n "$MODULE_NAME" 2>/dev/null || true)" \
 			"$(modinfo -k "$target_kernel" -n vkms 2>/dev/null || true)"; do
 			case "$module_file" in
-				"/lib/modules/${target_kernel}/updates/"*|"/lib/modules/${target_kernel}/extra/"*)
+				"/lib/modules/${target_kernel}/updates/"*|"/lib/modules/${target_kernel}/extra/"*|\
+				"/usr/lib/modules/${target_kernel}/updates/"*|"/usr/lib/modules/${target_kernel}/extra/"*)
 					backup_one_target "$module_file"
 					[[ "$target_kernel" == "$KERNEL" ]] || ROLLBACK_KERNELS+=("$target_kernel") ;;
 			esac
@@ -501,6 +503,10 @@ backup_install_targets() {
 
 restore_install_targets() {
 	local index target backup restore_status=0
+	# Disable a newly enabled unit before its file is restored or removed.
+	if ((!BOOTSTRAP_WAS_ENABLED)) && systemctl is-enabled --quiet monitorize-vkms-bootstrap.service 2>/dev/null; then
+		systemctl disable monitorize-vkms-bootstrap.service >/dev/null 2>&1 || restore_status=1
+	fi
 	for ((index=0; index<${#BACKUP_TARGETS[@]}; index++)); do
 		target="${BACKUP_TARGETS[index]}"
 		backup="${WORK_DIR}/system-backups/${index}"
@@ -517,8 +523,6 @@ restore_install_targets() {
 	done
 	if ((BOOTSTRAP_WAS_ENABLED)); then
 		systemctl enable monitorize-vkms-bootstrap.service >/dev/null 2>&1 || restore_status=1
-	else
-		systemctl disable monitorize-vkms-bootstrap.service >/dev/null 2>&1 || restore_status=1
 	fi
 	systemctl daemon-reload >/dev/null 2>&1 || restore_status=1
 	return "$restore_status"

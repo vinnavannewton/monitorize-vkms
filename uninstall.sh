@@ -194,7 +194,7 @@ verify_removal() {
 		[[ -z "$custom" ]] || die "${MODULE_NAME} still resolves for ${kernel}: ${custom}"
 		stock="$(modinfo -k "$kernel" -n vkms 2>/dev/null || true)"
 		case "$stock" in
-			"/lib/modules/${kernel}/kernel/"*) log "Distro VKMS for ${kernel}: ${stock}" ;;
+			"/lib/modules/${kernel}/kernel/"*|"/usr/lib/modules/${kernel}/kernel/"*) log "Distro VKMS for ${kernel}: ${stock}" ;;
 			"(builtin)") log "Kernel ${kernel} provides built-in VKMS" ;;
 			"") warn "Kernel ${kernel} does not expose a distro vkms module" ;;
 			*) die "An external vkms replacement still resolves for ${kernel}: ${stock}" ;;

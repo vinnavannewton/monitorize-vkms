@@ -41,6 +41,32 @@ restore_install_targets
 [[ "$(cat "$1/tool")" == old && ! -e "$1/absent" ]]
 ''')
 
+    def test_missing_bootstrap_unit_does_not_fail_rollback(self):
+        self.run_shell(["restore_install_targets"], '''
+BACKUP_TARGETS=(); BACKUP_EXISTS=(); BOOTSTRAP_WAS_ENABLED=0
+systemctl() { [[ "$1" == daemon-reload ]]; }
+restore_install_targets
+''')
+
+    def test_usr_lib_module_paths_preserve_stock_vkms(self):
+        self.run_shell(["remove_legacy_versions", "record_stock_module", "verify_installation"], '''
+KERNEL=test-kernel; MODULE_NAME=monitorize_vkms; SECURE_BOOT_STATE=disabled
+modinfo() {
+  case "${!#}" in
+    vkms) printf '/usr/lib/modules/test-kernel/kernel/drivers/gpu/drm/vkms/vkms.ko.zst\\n' ;;
+    monitorize_vkms) printf '/usr/lib/modules/test-kernel/updates/monitorize_vkms.ko.zst\\n' ;;
+  esac
+}
+dkms_versions() { :; }
+depmod() { :; }
+verify_module_file() { :; }
+log() { :; }
+die() { echo "$*" >&2; exit 1; }
+remove_legacy_versions
+record_stock_module
+verify_installation
+''')
+
     def test_failed_backup_never_registers_partial_snapshot(self):
         self.run_shell(["backup_one_target"], '''
 WORK_DIR="$1/backup"
