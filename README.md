@@ -117,6 +117,22 @@ Install dependencies for the standard `linux-omarchy` kernel:
 sudo pacman -S --needed git dkms base-devel linux-omarchy-headers python python-dbus python-gobject polkit mokutil wlr-randr
 ```
 
+### CachyOS
+
+Update your system. If the kernel was updated, reboot before continuing.
+
+```bash
+sudo pacman -Syu
+```
+
+Install dependencies for the standard `linux-cachyos` kernel:
+
+```bash
+sudo pacman -S --needed git dkms base-devel linux-cachyos-headers python python-dbus python-gobject polkit mokutil wlr-randr
+```
+
+For `linux-cachyos-lts`, use `linux-cachyos-lts-headers`.
+
 ### Fedora
 
 Update and reboot first so the kernel development files match the running
