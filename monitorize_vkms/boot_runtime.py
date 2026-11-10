@@ -20,6 +20,8 @@ from .edid import generate_edid
 from .lease import read_lease, write_lease
 from .drm import monitorize_drm_connectors as discover
 
+CINNAMON_REMOTE_LOGIN_PROTOCOL = 1
+
 ENROLLMENT = Path('/etc/monitorize/remote-login.json')
 CGROUP_ROOT = Path('/sys/fs/cgroup')
 IDENTITY_ROOT = Path('/var/lib/monitorize/remote-login')
@@ -151,10 +153,13 @@ def desktop_context(uid: int) -> str:
     session, environment = helper._active_session(uid)
     users = [row for row in local_sessions() if row.get('seat') == 'seat0'
              and row.get('class') not in ('manager', 'greeter')]
-    if (environment.get('XDG_SESSION_TYPE') != 'wayland' or len(users) != 1
+    session_type = environment.get('XDG_SESSION_TYPE')
+    desktop = environment.get('XDG_CURRENT_DESKTOP', '').lower().split(':')
+    cinnamon_x11 = session_type == 'x11' and bool({'cinnamon', 'x-cinnamon'}.intersection(desktop))
+    if ((session_type != 'wayland' and not cinnamon_x11) or len(users) != 1
             or users[0].get('class') not in ('user', 'user-early', 'user-incomplete')
             or users[0].get('uid') != uid or users[0].get('session') != session):
-        raise PermissionError('A unique enrolled local Wayland desktop is required.')
+        raise PermissionError('A unique enrolled local supported graphical desktop is required.')
     return session
 
 

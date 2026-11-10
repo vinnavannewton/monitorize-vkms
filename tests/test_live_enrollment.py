@@ -179,6 +179,16 @@ class LiveReservationTests(unittest.TestCase):
                  patch.object(runtime,'program_edid',side_effect=AssertionError('read only')):
                 self.assertEqual(facade.main(),0)
 
+    def test_desktop_context_accepts_cinnamon_x11_on_the_enrolled_seat(self):
+        rows = [dict(seat='seat0', session='3', uid=1000, **{'class': 'user'})]
+        with patch.object(runtime, 'local_sessions', return_value=rows), \
+             patch.object(helper, '_active_session') as active:
+            active.return_value = ('3', {'XDG_SESSION_TYPE': 'x11', 'XDG_CURRENT_DESKTOP': 'X-Cinnamon'})
+            self.assertEqual(runtime.desktop_context(1000), '3')
+            active.return_value = ('3', {'XDG_SESSION_TYPE': 'x11', 'XDG_CURRENT_DESKTOP': 'GNOME'})
+            with self.assertRaises(PermissionError):
+                runtime.desktop_context(1000)
+
     def test_desktop_context_rejects_another_local_account(self):
         with patch.object(helper,'_active_session',return_value=('3',dict(XDG_SESSION_TYPE='wayland'))), \
              patch.object(runtime,'local_sessions',return_value=[dict(seat='seat0',session='4',uid=1001,**{'class':'user'})]):
