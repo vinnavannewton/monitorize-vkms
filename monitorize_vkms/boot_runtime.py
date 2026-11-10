@@ -20,7 +20,7 @@ from .edid import generate_edid
 from .lease import read_lease, write_lease
 from .drm import monitorize_drm_connectors as discover
 
-CINNAMON_REMOTE_LOGIN_PROTOCOL = 1
+CINNAMON_REMOTE_LOGIN_PROTOCOL = 2
 
 ENROLLMENT = Path('/etc/monitorize/remote-login.json')
 CGROUP_ROOT = Path('/sys/fs/cgroup')
@@ -62,14 +62,38 @@ def read_enrollment(path: Path = ENROLLMENT) -> dict | None:
 
 
 def local_sessions() -> list[dict]:
-    result = subprocess.run(['/usr/bin/loginctl', 'list-sessions', '--json=short'],
-                            capture_output=True, text=True, timeout=3, check=True)
-    if len(result.stdout) > 65536:
-        raise RuntimeError('Too many sessions to verify boot ownership.')
-    values = json.loads(result.stdout)
-    if not isinstance(values, list) or len(values) > 32 or any(not isinstance(v, dict) for v in values):
-        raise ValueError('Invalid login session snapshot.')
-    return values
+    def loginctl(*arguments):
+        result = subprocess.run(['/usr/bin/loginctl', *arguments],
+                                capture_output=True, text=True, check=True, timeout=3)
+        if len(result.stdout) > 65536:
+            raise RuntimeError('Session inventory is too large to verify boot ownership.')
+        return result.stdout
+
+    # systemd 255 supports show-session properties, but not loginctl --json.
+    def listed_ids():
+        return [line.split()[0] for line in loginctl(
+            'list-sessions', '--no-legend', '--no-pager').splitlines() if line.strip()]
+
+    ids = listed_ids()
+    if len(ids) > 32 or len(set(ids)) != len(ids) or any(
+            not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', session) for session in ids):
+        raise ValueError('Invalid login session inventory.')
+    if not ids:
+        return []
+
+    raw = loginctl('show-session', '--no-pager', '--all', '-p', 'Id', '-p', 'User',
+                   '-p', 'Seat', '-p', 'Class', '--', *ids)
+    sessions = []
+    for record in raw.strip().split('\n\n'):
+        fields = dict(line.split('=', 1) for line in record.splitlines() if '=' in line)
+        if (set(fields) != {'Id', 'User', 'Seat', 'Class'} or not fields['Class']
+                or not re.fullmatch(r'[0-9]+', fields['User'])):
+            raise ValueError('Incomplete login session properties.')
+        sessions.append(dict(session=fields['Id'], uid=int(fields['User']),
+                             seat=fields['Seat'], **{'class': fields['Class']}))
+    if sorted(row['session'] for row in sessions) != sorted(ids) or sorted(listed_ids()) != sorted(ids):
+        raise ValueError('Login session inventory changed during verification.')
+    return sessions
 
 
 def no_seat_owner(sessions: list[dict], *, allow_greeter: bool = False) -> None:
@@ -457,7 +481,7 @@ def verify_quiescent(uid: int) -> None:
         pass
 
 
-def greeter_context() -> tuple[int, str]:
+def greeter_context(*, x11_account=None) -> tuple[int, str]:
     sessions = local_sessions()
     no_seat_owner(sessions, allow_greeter=True)
     candidates = [row for row in sessions if row.get('seat') == 'seat0' and row.get('class') == 'greeter']
@@ -466,6 +490,11 @@ def greeter_context() -> tuple[int, str]:
     row = candidates[0]
     from . import helper
     session, environment = helper._active_session(row['uid'])
-    if session != row.get('session') or environment.get('XDG_SESSION_TYPE') != 'wayland':
-        raise PermissionError('The graphical greeter changed.')
+    session_type = environment.get('XDG_SESSION_TYPE')
+    allowed = session_type == 'wayland' or (
+        session_type == 'x11' and x11_account is not None and row['uid'] > 0
+        and pwd.getpwuid(row['uid']).pw_name == x11_account
+    )
+    if session != row.get('session') or not allowed:
+        raise PermissionError('The graphical greeter changed or is unsupported.')
     return row['uid'], session

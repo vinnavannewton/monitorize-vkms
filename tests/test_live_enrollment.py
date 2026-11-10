@@ -118,6 +118,21 @@ class LiveReservationTests(unittest.TestCase):
             self.assertEqual(facade.reserve_greeter_installed(1000), value)
             self.assertGreaterEqual(context.call_count, 6)
 
+    def test_lightdm_reserves_with_an_x11_greeter_without_connecting_vkms(self):
+        stack = self.installed()
+        rows = [dict(seat='seat0', uid=113, session='g1', **{'class': 'greeter'})]
+        with stack, patch.object(runtime, 'local_sessions', return_value=rows), \
+             patch.object(helper, '_active_session', return_value=('g1', {'XDG_SESSION_TYPE': 'x11'})), \
+             patch.object(runtime.pwd, 'getpwuid', return_value=Mock(pw_name='lightdm')), \
+             patch.object(facade, '_installed_context', return_value=(
+                 helper, runtime, dict(uid=1000, enabled=True, manager='lightdm.service'))):
+            self.assertEqual(facade.reserve_greeter_installed(1000)['state'], 'reserved')
+            self.assertEqual((self.connector/'status').read_text(), '2')
+            with self.assertRaises(PermissionError):
+                runtime.greeter_context(x11_account='sddm')
+            with self.assertRaises(PermissionError):
+                runtime.greeter_context()
+
     def test_live_greeter_reservation_rejects_wrong_account_capture_and_seat_owner(self):
         stack, _ = self.greeter()
         with stack:
@@ -178,6 +193,22 @@ class LiveReservationTests(unittest.TestCase):
                  patch.object(runtime,'reserve_boot_output',side_effect=AssertionError('boot creation forbidden')), \
                  patch.object(runtime,'program_edid',side_effect=AssertionError('read only')):
                 self.assertEqual(facade.main(),0)
+
+    def test_local_sessions_works_without_loginctl_json(self):
+        listing = 'c2 1000 vinnavan seat0 tty7 active no -\n8 1000 vinnavan - - active no -\n'
+        properties = 'Id=c2\nUser=1000\nSeat=seat0\nClass=user\n\nId=8\nUser=1000\nSeat=\nClass=user\n'
+        replies = [Mock(stdout=text) for text in (listing, properties, listing)]
+        with patch.object(runtime.subprocess, 'run', side_effect=replies) as run:
+            rows = runtime.local_sessions()
+        self.assertEqual(rows, [
+            {'session': 'c2', 'uid': 1000, 'seat': 'seat0', 'class': 'user'},
+            {'session': '8', 'uid': 1000, 'seat': '', 'class': 'user'},
+        ])
+        self.assertEqual(run.call_args_list[1].args[0][-3:], ['--', 'c2', '8'])
+        replies[-1] = Mock(stdout='c3 1001 other seat0 tty7 active no -\n')
+        with patch.object(runtime.subprocess, 'run', side_effect=replies):
+            with self.assertRaisesRegex(ValueError, 'inventory changed'):
+                runtime.local_sessions()
 
     def test_desktop_context_accepts_cinnamon_x11_on_the_enrolled_seat(self):
         rows = [dict(seat='seat0', session='3', uid=1000, **{'class': 'user'})]

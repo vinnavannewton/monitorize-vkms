@@ -97,12 +97,22 @@ def reserve_desktop_installed(uid: int, session: str, *, generation: str) -> dic
         os.close(lock)
 
 
+def _reservation_greeter(runtime, settings):
+    # Reserve the disconnected connector for existing-screen X11 capture.
+    # Virtual greeter activation still requires a verified Wayland session.
+    if not settings.get('create_login_virtual_display', False):
+        account = {'lightdm.service': 'lightdm', 'sddm.service': 'sddm'}.get(settings.get('manager'))
+        if account is not None:
+            return runtime.greeter_context(x11_account=account)
+    return runtime.greeter_context()
+
+
 def reserve_greeter_installed(uid: int) -> dict:
     """Recover a dormant reservation without restarting or owning the greeter."""
     helper, runtime, settings = _installed_context()
     if type(uid) is not int or uid != settings['uid']:
         raise PermissionError('Only the enrolled account may reserve the display.')
-    context = runtime.greeter_context()
+    context = _reservation_greeter(runtime, settings)
     lock = helper._acquire_lifecycle_lock()
     try:
         return _reserve_greeter_locked(helper, runtime, settings, context)
@@ -113,7 +123,7 @@ def reserve_greeter_installed(uid: int) -> dict:
 def _reserve_greeter_locked(helper, runtime, settings, context):
     """Shared by installed recovery and boot-unit restart; lifecycle lock held."""
     def check():
-        if runtime.greeter_context() != context:
+        if _reservation_greeter(runtime, settings) != context:
             raise PermissionError('Graphical greeter changed during reservation.')
     check()
     root = helper._configfs_root([])
@@ -280,7 +290,7 @@ def main() -> int:
             return 0
         sessions = runtime.local_sessions()
         if any(row.get('seat') == 'seat0' and row.get('class') == 'greeter' for row in sessions):
-            _reserve_greeter_locked(helper, runtime, settings, runtime.greeter_context())
+            _reserve_greeter_locked(helper, runtime, settings, _reservation_greeter(runtime, settings))
             return 0
         runtime.reserve_boot_output(state=helper.STATE_DIRECTORY, connector=connector,
                                     uid=settings['uid'], boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
