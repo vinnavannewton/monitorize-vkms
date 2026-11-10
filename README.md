@@ -1,5 +1,7 @@
 # monitorize-vkms
 
+[![Version 1.4](https://img.shields.io/badge/version-1.4-blue)](VERSION)
+
 Standalone virtual display tool and out-of-tree VKMS kernel module for Linux.
 
 `monitorize-vkms` enables creating real DRM/KMS virtual monitors with custom resolutions and refresh rates, complete with dynamic EDID generation and desktop layout integration for validated backends.
