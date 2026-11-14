@@ -1404,12 +1404,15 @@ def kde_activate_vkms(
     return True, details, f"KWin activated {output_name} at {width}x{height}@{refresh:g}Hz"
 
 
-def kde_deactivate_vkms(target_name: str) -> bool:
+def kde_deactivate_vkms(target_name: str, *, allow_unexposed: bool = False) -> bool:
     """Disable one exact KWin output, then confirm it is no longer active."""
     if not shutil.which("kscreen-doctor"):
         raise CompositorError("kscreen-doctor is not installed; refusing to disconnect the VKMS output")
     outputs = kde_outputs()
     matches = [out for out in outputs if str(out.get("name") or "") == target_name]
+    if (allow_unexposed and not matches and any(
+            out.get("enabled") is True and out.get("connected") is True for out in outputs)):
+        return True
     if len(matches) != 1:
         raise CompositorError(f"Could not uniquely identify KWin output {target_name}")
     if any(type(out.get("enabled")) is not bool for out in outputs):

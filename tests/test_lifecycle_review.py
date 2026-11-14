@@ -90,6 +90,15 @@ class LifecycleReviewTest(unittest.TestCase):
                 comp.kde_deactivate_vkms("Virtual-1")
         run.assert_not_called()
 
+    def test_kde_can_release_unexposed_pending_named_output(self):
+        with patch.object(comp.shutil, "which", return_value="/usr/bin/kscreen-doctor"), \
+             patch.object(comp, "kde_outputs", return_value=[output("eDP-1")]), \
+             patch.object(comp.subprocess, "run") as run:
+            self.assertTrue(comp.kde_deactivate_vkms("Virtual-3", allow_unexposed=True))
+            with self.assertRaisesRegex(comp.CompositorError, "uniquely identify"):
+                comp.kde_deactivate_vkms("Virtual-3")
+        run.assert_not_called()
+
     def test_gnome_malformed_state_never_confirms_deactivation(self):
         interface = Mock()
         interface.GetCurrentState.return_value = (1, [], [()], {})

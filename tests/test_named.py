@@ -52,7 +52,11 @@ class NamedTests(unittest.TestCase):
 
     def test_more_than_two_independent_names_and_duplicate_rejection(self):
         patch.object(named, 'provision').start()
-        patch.object(helper, '_create_request', return_value={'success':True}).start()
+        def activate(request, *_args):
+            record = helper._read_lease(request.slot)
+            helper._write_lease({**record, 'state': 'active'}, request.slot)
+            return {'success': True}
+        patch.object(helper, '_create_request', side_effect=activate).start()
         slots=[]
         for index in range(5):
             named.create(SimpleNamespace(name=f'tab {index}', mode=[1920,1080,60]),
@@ -63,6 +67,28 @@ class NamedTests(unittest.TestCase):
         self.assertIsNone(helper._read_lease('mon1'))
         with self.assertRaisesRegex(helper.VkmsHelperError,'already exists'):
             named.create(SimpleNamespace(name='tab 0', mode=[1920,1080,60]), self.root,1000,'s1',{},helper,[])
+
+    def test_failed_create_releases_pending_record_and_allows_retry(self):
+        args = SimpleNamespace(name='Display 1', mode=[1920, 1080, 60])
+        with patch.object(named, 'provision'), patch.object(
+                helper, '_create_request', side_effect=[helper.VkmsHelperError('KWin timeout'), {'success': True}]):
+            with self.assertRaisesRegex(helper.VkmsHelperError, 'pending display was released'):
+                named.create(args, self.root, 1000, 's1', {}, helper, [])
+            self.assertEqual(named.records(helper, 1000), [])
+            named.create(args, self.root, 1000, 's1', {}, helper, [])
+
+    def test_retry_releases_only_pending_record_from_creating_session(self):
+        args = SimpleNamespace(name='Display 1', mode=[1920, 1080, 60])
+        slot = 'named-1000-' + 'a' * 32
+        record = dict(name=args.name, state='pending', uid=1000, session='s1', generation='g1',
+                      boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+        helper._write_lease(record, slot)
+        with self.assertRaisesRegex(helper.VkmsHelperError, 'another session'):
+            named.create(args, self.root, 1000, 's2', {}, helper, [])
+        self.assertEqual(helper._read_lease(slot), record)
+        with patch.object(named, 'provision'), patch.object(helper, '_create_request', return_value={'success': True}):
+            named.create(args, self.root, 1000, 's1', {}, helper, [])
+        self.assertIsNone(helper._read_lease(slot))
 
     def test_pool_reuses_only_disconnected_unleased_device_of_same_uid(self):
         slot='named-1000-'+'a'*32

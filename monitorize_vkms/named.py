@@ -77,19 +77,37 @@ def available_slot(root, uid, helper):
 
 def create(args, root, uid, session, env, helper, logs):
     name = validate_name(args.name)
-    if any(record and record.get('name') == name for _, record in records(helper, uid)):
-        raise helper.VkmsHelperError(f'A display named {name!r} already exists. Remove it before creating it again.')
     mode = helper._validate_requested_mode(args.mode or [])
     from monitorize_vkms.edid import generate_cvt_timing
-    generate_cvt_timing(*mode)  # Reject invalid modes before creating configfs objects.
+    generate_cvt_timing(*mode)
+    matches = [(slot, record) for slot, record in records(helper, uid)
+               if record and record.get('name') == name]
+    if matches:
+        if len(matches) != 1 or matches[0][1].get('state') != 'pending':
+            raise helper.VkmsHelperError(f'A display named {name!r} already exists. Remove it before creating it again.')
+        slot, record = matches[0]
+        if record.get('session') != session:
+            raise helper.VkmsHelperError(f'A pending display named {name!r} belongs to another session.')
+        remove_record(root, slot, record, uid, session, env, record.get('generation'), helper, logs)
+        logs.append(f'Released the previous failed creation of {name}')
     slot = available_slot(root, uid, helper)
     helper._write_lease(dict(name=name, slot=slot, uid=uid, session=session, mode=mode,
         boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
         generation=secrets.token_hex(16), state='pending'), slot)
-    provision(root, slot, helper, logs)
-    request = SimpleNamespace(operation='create', slot=slot, mode=mode, edid_base64=None,
-                              display_name=name)
-    result = helper._create_request(request, root, logs, uid, session, env)
+    try:
+        provision(root, slot, helper, logs)
+        request = SimpleNamespace(operation='create', slot=slot, mode=mode, edid_base64=None,
+                                  display_name=name)
+        result = helper._create_request(request, root, logs, uid, session, env)
+    except (helper.VkmsHelperError, OSError, ValueError) as error:
+        record = helper._read_lease(slot)
+        if record and record.get('state') == 'pending':
+            try:
+                remove_record(root, slot, record, uid, session, env, record.get('generation'), helper, logs)
+            except (helper.VkmsHelperError, OSError, ValueError) as cleanup:
+                raise helper.VkmsHelperError(f'{error} Cleanup also failed: {cleanup}') from error
+            raise helper.VkmsHelperError(f'{error} The pending display was released.') from error
+        raise
     result.update(name=name, display=name)
     return result
 

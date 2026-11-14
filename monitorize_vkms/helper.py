@@ -459,6 +459,11 @@ def _worker_main() -> int:
         print(json.dumps({"success": True, "desktop": desktop, "details": details, "message": message}))
         return 0
     if action == "deactivate":
+        if desktop == "kde" and os.environ.get("WAYLAND_DISPLAY") and request.get("allow_unexposed") is True:
+            from monitorize_vkms.compositor import kde_deactivate_vkms
+            kde_deactivate_vkms(name, allow_unexposed=True)
+            print(json.dumps({"success": True, "desktop": desktop}))
+            return 0
         if not deactivate_in_compositor(
             desktop, None, target_name=name, target_connector_id=request.get("connector_id")
         ):
@@ -677,7 +682,8 @@ def _destroy_slot(root: Path, logs: list[str], slot: str, uid: int,
         raise VkmsHelperError(f"{slot}'s DRM connector identity changed; refusing disconnect.")
     if lease.get("desktop") is not None or env.get("WAYLAND_DISPLAY") or env.get("DISPLAY"):
         _run_worker(uid, env, {"action": "deactivate", "name": lease["connector"],
-                               "connector_id": lease.get("connector_id"), "card": lease.get("card")})
+                               "connector_id": lease.get("connector_id"), "card": lease.get("card"),
+                               "allow_unexposed": bool(named_slot(slot) and lease.get("state") == "pending")})
     changed = _disconnect_connector(connector, logs)
     _remove_lease(slot)
     return changed
