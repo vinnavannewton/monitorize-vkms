@@ -1,6 +1,6 @@
 # monitorize-vkms
 
-[![Version 1.4](https://img.shields.io/badge/version-1.4-blue)](VERSION)
+[![Version 1.5](https://img.shields.io/badge/version-1.5-blue)](VERSION)
 
 Standalone virtual display tool and out-of-tree VKMS kernel module for Linux.
 

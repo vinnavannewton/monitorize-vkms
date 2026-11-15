@@ -1,3 +1,9 @@
+monitorize-vkms (1.5-1) unstable; urgency=medium
+
+  * Release Monitorize VKMS 1.5.
+
+ -- vinnavannewton <vinnavannewton@proton.me>  Sun, 15 Nov 2026 20:16:34 +0530
+
 monitorize-vkms (1.4-1) unstable; urgency=medium
 
   * Release Monitorize VKMS 1.4.
