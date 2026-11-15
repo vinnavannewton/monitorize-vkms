@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import secrets
 import stat
-from monitorize_vkms.names import named_slot
+from monitorize_vkms.names import SHARED_SLOTS, named_slot
 
 OWNER_UID = 0
 MAX_LEASE_BYTES = 65536
@@ -104,5 +104,9 @@ def named_slots(state: Path, uid=None):
     for path in Path(state).glob('named-*.json'):
         slot=path.stem
         if named_slot(slot) and (uid is None or slot_uid(slot)==uid):
+            result.append(slot)
+    for path in Path(state).glob('shared-*.json'):
+        slot = path.stem
+        if slot in SHARED_SLOTS and (uid is None or (read_lease(state, slot) or {}).get('uid') == uid):
             result.append(slot)
     return sorted(result)

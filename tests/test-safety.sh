@@ -61,9 +61,9 @@ assert_not_contains "${ROOT}/install.sh" 'systemctl start monitorize-vkms-bootst
 assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'Before=display-manager.service'
 assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'Requires=sys-kernel-config.mount'
 assert_contains "${ROOT}/systemd/monitorize-vkms-bootstrap.service" 'After=sys-kernel-config.mount'
-assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${CONNECTOR}/dynamic\""
-assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '2' > \"\${CONNECTOR}/status\""
-assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${CONNECTOR}/edid_enabled\""
-assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${CONNECTOR}/enabled\""
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${connector}/dynamic\""
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '2' > \"\${connector}/status\""
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${connector}/edid_enabled\""
+assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" "printf '1' > \"\${connector}/enabled\""
 assert_contains "${ROOT}/scripts/monitorize-vkms-bootstrap.sh" 'find_monitorize_drm_card'
 printf 'monitorize-vkms safety checks passed\n'

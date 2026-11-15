@@ -1,15 +1,13 @@
-"""Named CLI displays use independent reusable DRM devices, without a slot cap.
+"""Named displays use spare pipelines on the bootstrapped VKMS device.
 
-The app/greeter's bootstrapped card is never resized or disabled. Removed named
-outputs leave a disconnected device available for reuse until reboot, avoiding
-live DRM-card teardown while a compositor may still reference it.
+Older boot topologies can still use independent devices for compatibility.
 """
 import os
 from pathlib import Path
 import secrets
 from types import SimpleNamespace
 
-from monitorize_vkms.names import named_slot, validate_name
+from monitorize_vkms.names import SHARED_SLOTS, named_slot, validate_name
 from monitorize_vkms.lease import named_slots
 
 
@@ -20,6 +18,9 @@ def records(helper, uid=None):
 def topology(root, slot):
     if not named_slot(slot):
         raise ValueError('Invalid named display identity.')
+    if slot in SHARED_SLOTS:
+        instance = root / 'monitorize-vkms/monitorize'
+        return instance, instance / 'connectors' / f'connector{slot[-1]}'
     instance = root / 'monitorize-vkms' / ('monitorize-' + slot)
     return instance, instance / 'connectors/connector0'
 
@@ -30,13 +31,15 @@ def require_topology(root, slot, logs):
     if (h._read(instance / 'enabled') != '1' or h._read(connector / 'dynamic') != '1'
             or h._read(connector / 'enabled') != '1'):
         raise h.VkmsHelperError('The named VKMS device is not ready.')
-    logs.append('Using independently registered named VKMS device')
+    logs.append('Using a registered named VKMS output')
     return instance, connector
 
 
 def provision(root, slot, helper, logs):
     """Build before enabling a new device; never alter an active device's CRTCs."""
     instance, connector = topology(root, slot)
+    if slot in SHARED_SLOTS:
+        return require_topology(root, slot, logs)
     if not instance.exists():
         instance.mkdir()
     if helper._read(instance / 'enabled') == '1':
@@ -64,6 +67,15 @@ def provision(root, slot, helper, logs):
 
 
 def available_slot(root, uid, helper):
+    shared = [slot for slot in SHARED_SLOTS if topology(root, slot)[1].is_dir()]
+    if shared:
+        for slot in shared:
+            _, connector = topology(root, slot)
+            if (helper._read_lease(slot) is None
+                    and helper._read(connector / 'status') == '2'
+                    and helper._read(connector / 'enabled') == '1'):
+                return slot
+        raise helper.VkmsHelperError('All six extra VKMS outputs are in use or unavailable.')
     base = root / 'monitorize-vkms'
     for instance in sorted(base.glob(f'monitorize-named-{uid}-*')):
         slot = instance.name[len('monitorize-'):]

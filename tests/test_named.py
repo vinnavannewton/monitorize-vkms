@@ -14,7 +14,7 @@ from monitorize_vkms import named, helper, lease
 from monitorize_vkms.cli import main
 from monitorize_vkms.drm import monitorize_drm_connectors, find_monitorize_card
 from monitorize_vkms.edid import generate_edid, display_from_edid
-from monitorize_vkms.names import validate_name, edid_identity
+from monitorize_vkms.names import SHARED_SLOTS, validate_name, edid_identity
 
 
 class NamedTests(unittest.TestCase):
@@ -89,6 +89,38 @@ class NamedTests(unittest.TestCase):
         with patch.object(named, 'provision'), patch.object(helper, '_create_request', return_value={'success': True}):
             named.create(args, self.root, 1000, 's1', {}, helper, [])
         self.assertIsNone(helper._read_lease(slot))
+
+    def test_shared_pool_allocates_six_outputs_on_bootstrap_device(self):
+        for slot in SHARED_SLOTS:
+            instance, connector = named.topology(self.root, slot)
+            self.assertEqual(instance, self.root / 'monitorize-vkms/monitorize')
+            connector.mkdir(parents=True)
+            (connector / 'enabled').write_text('1')
+            (connector / 'status').write_text('2')
+        for slot in SHARED_SLOTS:
+            self.assertEqual(named.available_slot(self.root, 1000, helper), slot)
+            helper._write_lease({'uid': 1000}, slot)
+        self.assertEqual(lease.named_slots(self.state, 1000), list(SHARED_SLOTS))
+        self.assertEqual(lease.named_slots(self.state, 1001), [])
+        with self.assertRaisesRegex(helper.VkmsHelperError, 'All six extra'):
+            named.available_slot(self.root, 1001, helper)
+        helper._remove_lease(SHARED_SLOTS[2])
+        self.assertEqual(named.available_slot(self.root, 1001, helper), SHARED_SLOTS[2])
+
+    def test_shared_edids_are_discovered_on_bootstrap_card(self):
+        drm = self.root / 'drm'
+        drm.mkdir()
+        device = self.root / 'faux/monitorize'
+        device.mkdir(parents=True)
+        for index, slot in enumerate(('mon1', 'mon2', *SHARED_SLOTS), 1):
+            connector = drm / f'card2-Virtual-{index}'
+            connector.mkdir()
+            (connector / 'device').symlink_to(device)
+            (connector / 'status').write_text('connected')
+            (connector / 'edid').write_bytes(generate_edid(1920, 1080, 60, slot))
+        outputs = monitorize_drm_connectors(drm)
+        self.assertEqual([outputs[f'Virtual-{index}']['display'] for index in range(1, 9)],
+                         ['mon1', 'mon2', *SHARED_SLOTS])
 
     def test_pool_reuses_only_disconnected_unleased_device_of_same_uid(self):
         slot='named-1000-'+'a'*32

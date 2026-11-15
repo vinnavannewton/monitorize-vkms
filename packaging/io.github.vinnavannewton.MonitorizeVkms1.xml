@@ -30,6 +30,19 @@
       <arg name="generation" type="s" direction="in"/>
       <arg name="response_json" type="s" direction="out"/>
     </method>
+    <method name="CreateNamedDisplay">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="width" type="i" direction="in"/>
+      <arg name="height" type="i" direction="in"/>
+      <arg name="refresh" type="d" direction="in"/>
+      <arg name="response_json" type="s" direction="out"/>
+    </method>
+    <method name="DestroyNamedDisplay">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="generation" type="s" direction="in"/>
+      <arg name="response_json" type="s" direction="out"/>
+    </method>
+    <method name="ListNamedDisplays"><arg name="response_json" type="s" direction="out"/></method>
     <method name="DestroyAll"><arg name="response_json" type="s" direction="out"/></method>
   </interface>
 </node>

@@ -9,7 +9,7 @@ from typing import Callable, Any
 
 from monitorize_vkms.errors import MonitorizeVkmsError
 from monitorize_vkms.edid import display_from_edid
-from monitorize_vkms.names import device_slot, edid_identity
+from monitorize_vkms.names import SHARED_SLOTS, device_slot, edid_identity
 
 DRM_DISCOVERY_TIMEOUT = 5.0
 POLL_INTERVAL = 0.1
@@ -82,6 +82,11 @@ def monitorize_drm_connectors(drm_root: Path | None = None) -> dict[str, dict]:
                             display = display_from_edid(edid)
                             if instance_slot != 'managed':
                                 display = instance_slot if display == edid_identity(instance_slot) else None
+                            else:
+                                display = next((slot for slot in SHARED_SLOTS
+                                                if edid_identity(slot) == display), display)
+                                if display not in ('mon1', 'mon2', *SHARED_SLOTS):
+                                    display = None
                             edid_sha256 = hashlib.sha256(edid).hexdigest() if display else None
                         except OSError:
                             display = None

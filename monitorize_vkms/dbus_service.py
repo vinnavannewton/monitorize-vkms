@@ -92,6 +92,9 @@ def _execute_helper(uid, action, argv, unattended=False):
             )):
         return json.dumps({"success": True, "api_version": 1, "displays": ["mon1", "mon2"],
                            "topology_ready": False, "message": message})
+    if result.returncode and argv[0] == "destroy-named":
+        details = response.get("results", {}).values()
+        message = next((item["error"] for item in details if "error" in item), message)
     if result.returncode and argv[0] != "destroy-all" and response.get("cleanup_state") != "not_needed":
         raise RuntimeError(message)
     return json.dumps(response)
@@ -115,8 +118,11 @@ def _run_live_request(sender, uid, action, argv, interactive):
 
 def _cleanup_abandoned(uid, argv, response):
     if response.get('created') and response.get('generation'):
-        _execute_helper(uid, 'destroy', ['destroy', '--slot', argv[2], '--generation', response['generation']],
-                        unattended=authorization.read(uid) is not None)
+        if argv[0] == 'create-named':
+            command = ['destroy-named', argv[1], '--generation', response['generation']]
+        else:
+            command = ['destroy', '--slot', argv[2], '--generation', response['generation']]
+        _execute_helper(uid, 'destroy', command, unattended=authorization.read(uid) is not None)
 
 
 class MonitorizeVkmsService(dbus.service.Object):
@@ -204,6 +210,39 @@ class MonitorizeVkmsService(dbus.service.Object):
             return
         self._dispatch(sender, "create", ["create", "--slot", display, "--mode",
                                            str(width), str(height), str(refresh)], reply, error)
+
+    @dbus.service.method(INTERFACE, in_signature="siid", out_signature="s", sender_keyword="sender",
+                         async_callbacks=("reply", "error"))
+    def CreateNamedDisplay(self, name, width, height, refresh, reply, error, sender=None):
+        from monitorize_vkms.names import validate_name
+        try:
+            name = validate_name(str(name))
+            if not (1 <= width <= 4095 and 1 <= height <= 4095 and 24 <= refresh <= 240):
+                raise ValueError("Requested display mode is out of range.")
+        except ValueError as exc:
+            error(dbus.DBusException(str(exc)))
+            return
+        self._dispatch(sender, "create", ["create-named", f"--name={name}", "--mode",
+                                           str(width), str(height), str(refresh)], reply, error)
+
+    @dbus.service.method(INTERFACE, in_signature="ss", out_signature="s", sender_keyword="sender",
+                         async_callbacks=("reply", "error"))
+    def DestroyNamedDisplay(self, name, generation, reply, error, sender=None):
+        from monitorize_vkms.names import validate_name
+        try:
+            name = validate_name(str(name))
+        except ValueError as exc:
+            error(dbus.DBusException(str(exc)))
+            return
+        argv = ["destroy-named", f"--name={name}"]
+        if generation:
+            argv.extend(("--generation", str(generation)))
+        self._dispatch(sender, "destroy", argv, reply, error)
+
+    @dbus.service.method(INTERFACE, in_signature="", out_signature="s", sender_keyword="sender",
+                         async_callbacks=("reply", "error"))
+    def ListNamedDisplays(self, reply, error, sender=None):
+        self._dispatch(sender, "status", ["list-named"], reply, error)
 
     @dbus.service.method(INTERFACE, in_signature="ss", out_signature="s", sender_keyword="sender",
                          async_callbacks=("reply", "error"))

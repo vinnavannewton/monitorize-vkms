@@ -1,6 +1,7 @@
 """User display labels are metadata, never configfs paths or shell commands."""
 import re
 
+SHARED_SLOTS = tuple(f'shared-{index}' for index in range(2, 8))
 SLOT_PATTERN = re.compile(r'named-([1-9][0-9]*)-([a-f0-9]{32})\Z')
 
 
@@ -12,7 +13,7 @@ def validate_name(name):
 
 
 def named_slot(slot):
-    return isinstance(slot, str) and SLOT_PATTERN.fullmatch(slot) is not None
+    return isinstance(slot, str) and (slot in SHARED_SLOTS or SLOT_PATTERN.fullmatch(slot) is not None)
 
 
 def slot_uid(slot):
@@ -23,6 +24,8 @@ def slot_uid(slot):
 
 
 def edid_identity(slot):
+    if slot in SHARED_SLOTS:
+        return f'nffff{int(slot[-1]):04x}0000'
     match = SLOT_PATTERN.fullmatch(slot)
     if match is None:
         raise ValueError('Invalid named display identity.')
@@ -37,6 +40,6 @@ def device_slot(path):
             name = parts[index + 1]
             if name == 'monitorize':
                 return 'managed'
-            if name.startswith('monitorize-') and named_slot(name[len('monitorize-'):]):
+            if name.startswith('monitorize-') and SLOT_PATTERN.fullmatch(name[len('monitorize-'):]):
                 return name[len('monitorize-'):]
     return None

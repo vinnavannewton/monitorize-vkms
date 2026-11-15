@@ -126,6 +126,23 @@ class TwoDisplayTests(unittest.TestCase):
         self.assertIn(":1.42", run.call_args_list[0].args[0])
         self.assertEqual(run.call_args_list[1].kwargs["env"]["PKEXEC_UID"], "1000")
 
+    def test_named_dbus_creation_reuses_existing_create_policy(self):
+        argv = ["create-named", "--name=Monitorize Display 3", "--mode", "1920", "1080", "60.0"]
+        with patch.object(dbus_service.subprocess, "run", side_effect=[
+            subprocess.CompletedProcess([], 0, "", ""),
+            subprocess.CompletedProcess([], 0, '{"success":true,"created":true}', ""),
+        ]) as run:
+            dbus_service._request(":1.42", 1000, "create", argv)
+        self.assertIn(dbus_service.ACTION_PREFIX + "create", run.call_args_list[0].args[0])
+        self.assertEqual(run.call_args_list[1].args[0][-len(argv):], argv)
+
+    def test_disconnected_named_caller_releases_only_its_generation(self):
+        argv = ["create-named", "--name=Monitorize Display 3"]
+        with patch.object(dbus_service, "_execute_helper") as execute:
+            dbus_service._cleanup_abandoned(1000, argv, {"created": True, "generation": "g3"})
+        execute.assert_called_once_with(1000, "destroy",
+            ["destroy-named", "--name=Monitorize Display 3", "--generation", "g3"], unattended=False)
+
     def test_dbus_denial_never_invokes_privileged_helper(self):
         with patch.object(dbus_service.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "")) as run:
             with self.assertRaises(PermissionError):
